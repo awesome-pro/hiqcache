@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Local scratch
+/tmp/
+*.log
+
+# Benchmark output that is regenerated, not curated
+results/*.tmp.json
+plots/*.pdf
