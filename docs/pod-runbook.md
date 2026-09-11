@@ -5,8 +5,11 @@ document is the sequence to run on a rented GPU.
 
 Target hardware: **1× A6000 48 GB**, 64+ GB CPU RAM, 100+ GB disk.
 
-Pinned SGLang commit: `515f5be77e74761c269e007ac41a5895191a1b7d` (fork
-`awesome-pro/sglang`, branch `main`).
+| Repo | Ref | Meaning |
+| --- | --- | --- |
+| `awesome-pro/sglang` | `hiqcache/int8-l2` | the Phase 3–9 implementation |
+| `awesome-pro/sglang` | `515f5be77e74761c269e007ac41a5895191a1b7d` | pinned base commit (branch `main`) |
+| `awesome-pro/hiqcache` | `main` | story, reference codec, tests, docs |
 
 ---
 
@@ -39,20 +42,40 @@ git checkout main
 
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python torch pytest numpy
-.venv/bin/python -m pytest tests/ -q            # expect 172 passed
+.venv/bin/python -m pytest tests/ -q            # expect 223 passed, no GPU needed
 ```
 
-Clone the SGLang fork at the pinned commit:
+Clone the SGLang fork with the implementation:
 
 ```bash
 git clone git@github.com:awesome-pro/sglang.git
 cd sglang
-git checkout 515f5be77e74761c269e007ac41a5895191a1b7d
-git rev-parse HEAD        # must print 515f5be77e74761c269e007ac41a5895191a1b7d
+git checkout hiqcache/int8-l2
+git rev-parse HEAD        # e554c653bc..., on top of the pinned base
+git merge-base --is-ancestor 515f5be77e74761c269e007ac41a5895191a1b7d HEAD \
+  && echo "base commit is an ancestor: OK"
 ```
 
 Install SGLang per its own instructions. Do **not** let SGLang and the codec share
 a venv unless the version pins agree — the codec only needs `torch`.
+
+### Run the fork's own INT8 tests first
+
+These need no GPU (codec + staging) and give the fastest signal:
+
+```bash
+cd sglang
+python -m pytest test/registered/unit/mem_cache/test_hicache_int8_codec.py -v
+```
+
+The `hiqcache` repo can also run these against the fork checkout directly, which
+is the recommended order because `test_codec_drift.py` additionally proves the
+fork's codec copy equals the reference implementation:
+
+```bash
+cd ../hiqcache
+HIQCACHE_SGLANG_ROOT=../sglang .venv/bin/python -m pytest tests/ -q
+```
 
 ### Record the hardware provenance (required by PROJECT.md Phase 14)
 
@@ -128,27 +151,46 @@ These were checked against the fork's working tree and are recorded in
 
 ---
 
-## 4. Integration checklist (Phases 3–9)
+## 4. Integration status — already written
 
-New file only: `python/sglang/srt/mem_cache/pool_host/mha_int8.py`, plus a
-dispatch branch in `get_mha_host_pool_cls` (`pool_host/mha.py:1510`).
+Phases 3–9 are implemented on `hiqcache/int8-l2`. The source map, data flow and
+fail-fast matrix are in `docs/sglang-integration.md`. **Read that before touching
+the pool.** Summary of what exists:
 
-Do **not** touch `l2_transfer.py`, `cache_controller.py`, `unified_radix_cache.py`
-or any CUDA source.
-
-Overrides required, with the reason each exists:
-
-| Override | Why |
+| Path (in the fork) | Purpose |
 | --- | --- |
-| `get_size_per_token()` | return encoded bytes/token; called at `base.py:194` **before** `init_kv_buffer()`, so it must read `self.device_pool` directly |
-| `init_kv_buffer()` | allocate the `uint8` arena via `ALLOC_MEMORY_FUNCS`, build per-layer ptr tables; **no** BF16 `k_buffer`/`v_buffer` |
-| `can_use_write_back_jit = False` | the staged `page_first` path writes raw BF16 into `k_buffer` |
-| `backup_from_device_all_layer()` | encode + stage + move; all on `device_to_host_stream` |
-| `load_to_device_per_layer()` | move + decode + scatter; **enqueue before returning** |
-| `get_data_page` / `set_from_flat_data_page` / `get_dummy_flat_data_page` | encoded page blob |
-| `get_page_buffer_meta` / `get_split_heads_page_buffer_meta` | L3 coherence |
-| `get_hybrid_pool_buffer()` | zero-copy registration |
-| `is_stride_page_aligned()` | honest O_DIRECT answer for the encoded stride |
+| `mem_cache/pool_host/int8_codec.py` | INT8 record quantise / pack / decode |
+| `mem_cache/pool_host/int8_staging.py` | device staging buffers + pointer tables |
+| `mem_cache/pool_host/mha_int8.py` | `MHATokenToKVPoolHostINT8` |
+| `mem_cache/pool_host/mha.py` | one dispatch branch (`+12` lines) |
+| `srt/environ.py` | `SGLANG_EXPERIMENTAL_HICACHE_INT8` (`+10` lines) |
+
+`l2_transfer.py`, `cache_controller.py`, `unified_radix_cache.py`,
+`unified_tree_core.py` and all CUDA sources are untouched.
+
+### What still has to be proven on the pod
+
+The pool parses, its codec and staging logic are unit-tested, and the fork's
+codec copy is pinned bit-for-bit to the reference implementation. **But none of
+the following has ever executed:**
+
+- the JIT HiCache kernel against a 1152-byte `element_size`
+- `cudaHostRegister` on the encoded arena
+- the D2H all-layer move with a per-layer pointer table
+- the H2D `element_dim = 576` bf16 reinterpretation trick
+- stream ordering around `on_layer_done`
+- `index_select` / advanced-index scatter at device scale
+
+Run the pool unit test first — it exercises all six in one file:
+
+```bash
+python -m pytest \
+  test/registered/unit/mem_cache/test_hicache_int8_pool_host_unit.py -v
+```
+
+If the JIT kernel rejects `element_size = 1152`, the failure is in the
+`pick_group_bytes` calculation, and `docs/verification-notes.md` has the
+arithmetic (`lanes_per_worker=32`, `group=128`, package `4`).
 
 ### The correctness trap that will bite
 
@@ -157,27 +199,34 @@ returns (`l2_transfer.py:177-178`), and the model's forward stream waits on that
 per-layer event. Therefore:
 
 ```
-load encoded bytes → dequantize → scatter BF16 → return → THEN on_layer_done
+load encoded bytes -> dequantise -> scatter BF16 -> return -> THEN on_layer_done
 ```
 
-Never `load → return → on_layer_done → dequantize later`. That is a data race
+Never `load -> return -> on_layer_done -> dequantise later`. That is a data race
 against the forward pass, and it will show up as intermittent wrong tokens rather
-than a crash.
+than a crash. The implementation already enqueues both steps before returning;
+the pod test is what proves it.
 
 Also banned in the hot path: `torch.cuda.synchronize()`, `.cpu()`, `.item()`.
-Temporary GPU buffers touched by the transfer stream need `record_stream()`.
+Temporary GPU buffers on the transfer stream need `record_stream()`; the pool
+avoids this by keeping staging persistent.
 
-### Fail-fast rejects (Phase 8)
+### Fail-fast matrix (Phase 8) — implemented
 
-`page_size != 1`, `TP != 1`, MLA, device-quantized KV, `head_dim != v_head_dim`,
-`layout != layer_first`, `io_backend != kernel`, MTP/draft pools, L3 storage
-backend, decode retraction `backup=host_pool`, and any
-`row_dim * itemsize % 128 != 0`.
+Rejected at construction: `page_size != 1`, `layout != layer_first`, host/device
+page-size mismatch, a device pool not covering all layers, layer sharding, MTP
+draft pools, quantized device KV, `store_dtype` not BF16/FP16,
+`head_dim != v_head_dim`, HND layout, `head_num * head_dim != 1024`, a row not a
+multiple of 128 B, and a missing JIT mover.
 
-### Activation (Phase 9)
+Rejected at transfer time: `io_backend != "kernel"`, `is_draft=True`.
 
-`SGLANG_EXPERIMENTAL_HICACHE_INT8=1`, checked in `get_mha_host_pool_cls`. No codec
-registry, no factory, no plugin API.
+Refused rather than implemented: `--hicache-storage-backend` (L3).
+
+### Activation (Phase 9) — implemented
+
+`SGLANG_EXPERIMENTAL_HICACHE_INT8=1`, checked in `get_mha_host_pool_cls` after
+the MXFP8 and asymmetric cases. No codec registry, no factory, no plugin API.
 
 ---
 
