@@ -53,19 +53,20 @@ The SGLang fork contains the actual runtime modification.
 | 0 | Repo scaffold + cross-device conformance harness | Mac | **done** |
 | 1 | Encoded representation (`layout.py`) | Mac | **done** |
 | 2 | Standalone codec + tests | Mac | **done** (CPU + MPS) |
-| 3 | Compressed host pool `mha_int8.py` | Pod | not started |
-| 4 | GPU staging architecture | Pod | not started |
-| 5 | D2H compression integration | Pod | not started |
-| 6 | H2D restoration integration | Pod | not started |
-| 7 | Stream semantics | Pod | not started |
-| 8 | Fail-fast configuration checks | Pod | not started |
-| 9 | Experimental activation path | Pod | not started |
-| 10 | Unit + kernel-level validation | both | partially (codec tests done) |
+| 3 | Compressed host pool `mha_int8.py` | Mac (written) | **done**, needs pod to run |
+| 4 | GPU staging architecture | Mac (written) | **done**, needs pod to run |
+| 5 | D2H compression integration | Mac (written) | **done**, needs pod to run |
+| 6 | H2D restoration integration | Mac (written) | **done**, needs pod to run |
+| 7 | Stream semantics | Pod | tests written, not yet run |
+| 8 | Fail-fast configuration checks | Mac (written) | **done**, needs pod to run |
+| 9 | Experimental activation path | Mac (written) | **done** |
+| 10 | Unit + kernel-level validation | both | codec/staging/drift done locally; pool tests await the pod |
 | 11 | Real SGLang integration smoke | Pod | not started |
 | 12–20 | Benchmarks, quality, analysis, demo | Pod + Mac analysis | not started |
 
 Verified facts, kernel constraints and the local/pod capability split are recorded in
-`docs/verification-notes.md`. Do not re-derive them from the trace doc alone.
+`docs/verification-notes.md`. The fork source map and runtime contract are in
+`docs/sglang-integration.md`. Do not re-derive them from the trace doc alone.
 
 ---
 

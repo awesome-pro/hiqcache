@@ -21,10 +21,17 @@ L1 (GPU, BF16)             L2 (CPU, INT8 + BF16 scales)
 | Phase | Where | State |
 | --- | --- | --- |
 | Encoded representation (format, alignment) | Mac | **done** |
-| Standalone codec + tests | Mac (CPU + MPS) | **done** — 172 tests |
+| Standalone codec + tests | Mac (CPU + MPS) | **done** |
 | Cross-device conformance harness | Mac | **done** — CPU ≡ MPS bit-identical |
-| `MHATokenToKVPoolHostINT8` + SGLang integration | GPU pod | not started |
+| `MHATokenToKVPoolHostINT8` + dispatch + fail-fast | Mac (written, unit-tested) | **done** — needs pod to run |
+| GPU staging buffers + growth policy | Mac (unit-tested) | **done** |
+| Stream semantics + transfer roundtrip | GPU pod | **tests written, not yet run** |
 | Benchmarks, quality, analysis | GPU pod + Mac | not started |
+
+223 tests pass locally with no GPU. The pool class parses and its logic is
+covered, but **the CUDA JIT kernels, pinned arena and stream ordering have not
+executed yet** — that is what the pod run is for.
+
 
 ## The format
 
@@ -86,13 +93,36 @@ Measured, on a Qwen3-8B-shaped 512-token batch:
 src/hiqcache/
   layout.py     byte arithmetic, alignment proofs, compression math
   codec.py      quantise / pack / unpack / dequantise + error accounting
-tests/          172 tests: layout, codec, capacity, device parity
+tests/          223 tests: layout, codec, capacity, device parity,
+                fork codec, fork staging buffers, fork/reference drift guard
 scripts/
   conformance.py     cross-device digest harness (Mac ↔ pod)
   capacity_table.py  exact reproduction of SGLang's host-pool sizing
-docs/               verification notes, source maps
+docs/               verification notes, source maps, pod runbook
 results/            conformance manifests, benchmark output
 ```
+
+## SGLang integration
+
+Three new files and two edited lines in the fork. Nothing else changes — no
+`l2_transfer.py`, no `cache_controller.py`, no radix tree, no CUDA sources.
+
+| Path (in the fork) | Purpose |
+| --- | --- |
+| `mem_cache/pool_host/int8_codec.py` | INT8 record quantise / pack / decode |
+| `mem_cache/pool_host/int8_staging.py` | device staging buffers + pointer tables |
+| `mem_cache/pool_host/mha_int8.py` | `MHATokenToKVPoolHostINT8` |
+| `mem_cache/pool_host/mha.py` | one dispatch branch in `get_mha_host_pool_cls` |
+| `srt/environ.py` | `SGLANG_EXPERIMENTAL_HICACHE_INT8` and staging size |
+
+```bash
+SGLANG_EXPERIMENTAL_HICACHE_INT8=1 \
+python -m sglang.launch_server --model-path Qwen/Qwen3-8B \
+  --enable-hierarchical-cache --hicache-mem-layout layer_first \
+  --hicache-size 8 --page-size 1 --tp-size 1
+```
+
+Full source map, data flow and fail-fast matrix: `docs/sglang-integration.md`.
 
 ## Reproduce (no GPU needed)
 
@@ -100,10 +130,16 @@ results/            conformance manifests, benchmark output
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python torch pytest numpy
 
-.venv/bin/python -m pytest tests/ -q          # 172 tests
+.venv/bin/python -m pytest tests/ -q          # 223 tests, no GPU
 .venv/bin/python scripts/capacity_table.py --hicache-size 8
 .venv/bin/python scripts/conformance.py generate --device cpu
 ```
+
+Tests that target the fork's own modules find the checkout automatically from
+the sibling `sglang/` directory; override with `HIQCACHE_SGLANG_ROOT=/path/to/sglang`.
+They import the **real** fork sources, so there is no copy to keep in sync — and
+`tests/test_codec_drift.py` additionally pins the fork's self-contained codec to
+this repo's reference implementation, bit for bit.
 
 ## The Mac ↔ pod contract
 
