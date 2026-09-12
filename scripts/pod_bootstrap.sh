@@ -66,6 +66,32 @@ echo "pinned base $BASE_COMMIT is an ancestor: OK"
 git -C sglang rev-parse HEAD > provenance/sglang_sha.txt
 git -C hiqcache rev-parse HEAD > provenance/hiqcache_sha.txt
 
+# ------------------------------------------------------- GATE 0: env probe
+# Runs before any pip install. Answers the only question that decides whether
+# the compiled HiCache kernels can work at all: can this box JIT-compile a CUDA
+# extension? A missing ninja or CUDA header otherwise surfaces much later as a
+# generic "needs the JIT HiCache kernel" error that looks like a HiCache bug.
+say "GATE 0/4: environment probe (JIT compile capability)"
+if ! python scripts/env_probe.py --no-network; then
+  cat <<'NOTE' >&2
+
+GATE 0 failed. The probe output above names the blocking item(s).
+
+Most common case, and a one-line fix:
+
+    pip install ninja
+
+(`ninja` is a declared SGLang dependency, so it would arrive with SGLang -- but
+without it the JIT path fails in a way that is hard to attribute.)
+
+If nvcc or the CUDA headers are missing, the compiled HiCache kernels cannot
+work on this image at all. Switch to an image with a full CUDA toolkit rather
+than debugging this one; see docs/pod-guide.md Appendix A.
+
+NOTE
+  die "environment probe failed (gate 0)"
+fi
+
 # --------------------------------------------------------------- codec venv
 say "Codec venv (torch + pytest only; independent of the SGLang install)"
 if [ ! -d hiqcache/.venv ]; then
@@ -76,13 +102,13 @@ hiqcache/.venv/bin/pip install --quiet torch pytest numpy
 hiqcache/.venv/bin/python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 # ------------------------------------------------------------------- gates
-say "GATE 1/3: local test suite must be green"
+say "GATE 1/4: local test suite must be green"
 (cd hiqcache && HIQCACHE_SGLANG_ROOT="../sglang" .venv/bin/python -m pytest tests/ -q)
 
-say "GATE 2/3: preflight"
+say "GATE 2/4: preflight"
 (cd hiqcache && .venv/bin/python scripts/preflight.py --sglang-root ../sglang)
 
-say "GATE 3/3: codec conformance on CUDA vs the Mac's CPU manifest"
+say "GATE 3/4: codec conformance on CUDA vs the Mac's CPU manifest"
 (cd hiqcache && .venv/bin/python scripts/conformance.py generate --device cuda \
     --json results/conformance_cuda.json \
     --expect results/conformance_cpu.json)

@@ -48,13 +48,18 @@ bash scripts/pod_bootstrap.sh /workspace
 
 `pod_bootstrap.sh` is idempotent. It records hardware provenance, clones both
 repos at the right refs, asserts the pinned base commit is an ancestor, builds an
-isolated codec venv, and runs **three gates**:
+isolated codec venv, and runs **four gates**:
 
 | Gate | Proves | Expected |
 | --- | --- | --- |
+| 0 | environment can JIT-compile CUDA (`scripts/env_probe.py`) | `this box can run the HiCache JIT path` |
 | 1 | local suite green on the pod | `223 passed` |
 | 2 | preflight | `all blocking checks passed` |
 | 3 | **codec conformance on CUDA** | `PASS: codec is bit-identical to the reference device` |
+
+**Gate 0 is the fastest to fail and the cheapest to fix.** If it reports
+`RuntimeError: Ninja is required to load C++ extensions`, that is
+`pip install ninja` and re-run — see Appendix A. Do not replace the pod for it.
 
 **Gate 3 is the important one.** The Mac already proved CPU ≡ MPS over 9 vectors.
 If CUDA disagrees, stop — the bug is in the codec or a backend op, not in
@@ -284,57 +289,52 @@ python scripts/analyse.py results/       # once written
 
 ## Appendix A — Checking a fresh pod before you commit to it
 
-Run these the moment the pod is up, before `pod_bootstrap.sh`. They take a minute
-and catch image problems while the pod is still cheap to replace.
+`pod_bootstrap.sh` runs this automatically as **GATE 0/4**, before any pip
+install. You can also run it by hand the moment the pod is up:
 
 ```bash
-# 1. What did the image actually ship?
-python -c "import sys, torch; print('python', sys.version.split()[0]);
-print('torch', torch.__version__); print('cuda runtime', torch.version.cuda);
-print('gpu', torch.cuda.get_device_name(0));
-print('capability', torch.cuda.get_device_capability(0))"
-nvcc --version | tail -2
-nvidia-smi --query-gpu=driver_version --format=csv,noheader
-
-# 2. Can it compile a CUDA extension at all? This is what the HiCache JIT
-#    kernels need, and it is the single most important capability on the box.
-python - <<'PY'
-import torch
-from torch.utils.cpp_extension import CUDA_HOME
-print("CUDA_HOME:", CUDA_HOME)
-src = "extern \"C\" __global__ void k(){}"
-open("/tmp/t.cu","w").write(src)
-try:
-    torch.utils.cpp_extension.load_inline(
-        name="probe", cpp_sources="", cuda_sources=src,
-        functions=[], verbose=False)
-    print("JIT COMPILE: OK")
-except Exception as e:
-    print("JIT COMPILE: FAILED ->", type(e).__name__, str(e)[:300])
-PY
+cd hiqcache
+python scripts/env_probe.py
 ```
 
-**`JIT COMPILE: OK` is the go/no-go.** The HiCache kernels are JIT-compiled at
-first use by `sglang.kernels.ops.kvcache.hicache`. Without `nvcc` and the CUDA
-headers, nothing in step 3 can work, and you want to know that now rather than
-after installing SGLang.
+It answers the only question that decides whether the compiled HiCache kernels
+can work at all: **can this box JIT-compile and load a CUDA extension?** It
+checks the interpreter, torch, GPU visibility, `nvcc`, the CUDA headers
+(`cuda_runtime.h`, `cuda_fp16.h`, `cuda_bf16.h`), `ninja`, a C++ compiler, an
+actual compile-and-load, and GitHub SSH auth.
+
+### `JIT COMPILE: FAILED -> RuntimeError: Ninja is required to load C++ extensions`
+
+This is the most common first failure and it is **not** a reason to replace the
+pod. `load_inline` and `load_jit` shell out to ninja to drive the build:
+
+```bash
+pip install ninja
+python scripts/env_probe.py        # re-run; should now report the JIT compile OK
+```
+
+`ninja` is a declared SGLang dependency (`python/pyproject.toml:52`), so it
+would arrive with SGLang anyway — but without it the failure is easy to
+misattribute. SGLang does **not** crash when a JIT kernel fails to build:
+`can_use_hicache_jit_kernel` logs a warning and returns `False`, and the INT8
+host pool then raises a generic "needs the JIT HiCache kernel" error. A missing
+build tool would look exactly like a HiCache bug. Establish the answer up front.
 
 ### Version compatibility
 
 SGLang at this commit pins `torch==2.13.0`, and its own Dockerfile supports
-**CUDA 13.0** only. A pod image shipping a much older torch (2.8.x) will have
-torch replaced by pip during install, so:
+**CUDA 13.0** only. A pod image shipping an older torch (2.8.x, CUDA 12.8) will
+have torch replaced by pip during install, so:
 
 - the pip-installed torch brings its **own** bundled CUDA runtime, and only the
-  **driver** has to be new enough — an old system CUDA toolkit is not fatal;
-- but `nvcc` from the image is still what compiles the JIT kernels, so a CUDA
-  12.x toolkit *is* what you will be compiling with.
+  **driver** has to be new enough — an older system CUDA toolkit is not fatal;
+- but `nvcc` from the image is still what compiles the JIT kernels, so the
+  image's CUDA 12.8 toolkit *is* what you will be compiling with.
 
 If `pip install -e python` fights the preinstalled torch, or the JIT compile
-fails against a mismatched toolkit, **switch to a CUDA 13 image**
-(`runpod/pytorch` with `cu130`) rather than debugging the image. It is faster and
-cheaper than fighting a version skew, and step 1's gates will tell you
-immediately whether the new image is better.
+fails against a mismatched toolkit, **switch to a CUDA 13 image** rather than
+debugging the image. It is faster and cheaper than fighting version skew, and
+GATE 0 tells you immediately whether the new image is better.
 
 ## Appendix B — Getting results back, and surviving a pod restart
 
