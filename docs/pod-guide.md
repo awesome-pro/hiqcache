@@ -279,3 +279,105 @@ python scripts/analyse.py results/       # once written
 - [ ] Experiment A: codec overhead quantified at equal logical capacity
 - [ ] quality: logprob deltas and generation agreement measured
 - [ ] all results JSON + provenance committed to the `hiqcache` repo
+
+---
+
+## Appendix A — Checking a fresh pod before you commit to it
+
+Run these the moment the pod is up, before `pod_bootstrap.sh`. They take a minute
+and catch image problems while the pod is still cheap to replace.
+
+```bash
+# 1. What did the image actually ship?
+python -c "import sys, torch; print('python', sys.version.split()[0]);
+print('torch', torch.__version__); print('cuda runtime', torch.version.cuda);
+print('gpu', torch.cuda.get_device_name(0));
+print('capability', torch.cuda.get_device_capability(0))"
+nvcc --version | tail -2
+nvidia-smi --query-gpu=driver_version --format=csv,noheader
+
+# 2. Can it compile a CUDA extension at all? This is what the HiCache JIT
+#    kernels need, and it is the single most important capability on the box.
+python - <<'PY'
+import torch
+from torch.utils.cpp_extension import CUDA_HOME
+print("CUDA_HOME:", CUDA_HOME)
+src = "extern \"C\" __global__ void k(){}"
+open("/tmp/t.cu","w").write(src)
+try:
+    torch.utils.cpp_extension.load_inline(
+        name="probe", cpp_sources="", cuda_sources=src,
+        functions=[], verbose=False)
+    print("JIT COMPILE: OK")
+except Exception as e:
+    print("JIT COMPILE: FAILED ->", type(e).__name__, str(e)[:300])
+PY
+```
+
+**`JIT COMPILE: OK` is the go/no-go.** The HiCache kernels are JIT-compiled at
+first use by `sglang.kernels.ops.kvcache.hicache`. Without `nvcc` and the CUDA
+headers, nothing in step 3 can work, and you want to know that now rather than
+after installing SGLang.
+
+### Version compatibility
+
+SGLang at this commit pins `torch==2.13.0`, and its own Dockerfile supports
+**CUDA 13.0** only. A pod image shipping a much older torch (2.8.x) will have
+torch replaced by pip during install, so:
+
+- the pip-installed torch brings its **own** bundled CUDA runtime, and only the
+  **driver** has to be new enough — an old system CUDA toolkit is not fatal;
+- but `nvcc` from the image is still what compiles the JIT kernels, so a CUDA
+  12.x toolkit *is* what you will be compiling with.
+
+If `pip install -e python` fights the preinstalled torch, or the JIT compile
+fails against a mismatched toolkit, **switch to a CUDA 13 image**
+(`runpod/pytorch` with `cu130`) rather than debugging the image. It is faster and
+cheaper than fighting a version skew, and step 1's gates will tell you
+immediately whether the new image is better.
+
+## Appendix B — Getting results back, and surviving a pod restart
+
+**A pod without a mounted volume loses everything when it is terminated or
+recreated.** Model weights (~16 GB), the SGLang install and all results
+regress to nothing. Two independent mitigations — use both:
+
+1. **Pull results to the Mac as soon as each step passes.** From the Mac:
+
+   ```bash
+   # RunPod SSH uses a non-standard port; copy the exact command from the
+   # pod's "Connect" panel, then:
+   rsync -avz -e "ssh -p <PORT>" \
+       root@<POD_HOST>:/workspace/hiqcache/results/ ./pod-results/
+   rsync -avz -e "ssh -p <PORT>" \
+       root@<POD_HOST>:/workspace/provenance/ ./pod-provenance/
+   ```
+
+   Git is the second line of defence: commit the JSON into the `hiqcache` repo
+   and push. Then a dead pod costs GPU time, never data.
+
+2. **Attach a network volume** if you expect to iterate across sessions, and set
+   `HF_HOME` to it so the Qwen3-8B download happens once:
+
+   ```bash
+   export HF_HOME=/workspace/hf
+   ```
+
+**Verify GitHub auth on the pod** before relying on `git clone` inside
+`pod_bootstrap.sh`. The script uses SSH URLs, so:
+
+```bash
+ssh -T git@github.com          # expect: Hi <user>! You've successfully authenticated
+```
+
+No key on the pod? Either add your public key in the RunPod pod settings, or
+clone over HTTPS with a token:
+
+```bash
+git clone https://<TOKEN>@github.com/awesome-pro/hiqcache.git
+```
+
+**Keep the pod alive through step 4.** It contains a one-off, already-paid-for
+setup: pip environment, JIT kernel cache under `~/.cache/sglang`, and the model
+weights. Stopping it to save $0.55/hr and rebuilding later costs far more than
+the idle time.
