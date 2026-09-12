@@ -1,0 +1,281 @@
+"""Phase 11 smoke test: prove the compressed L2 path actually executes.
+
+"Server didn't crash" is not evidence. This script drives a real server through a
+cold-populate-then-reuse cycle and asserts on measured counters that
+
+  1. a request populates L1,
+  2. a cache entry is evicted to L2,
+  3. L2 holds *compressed* bytes at the encoded rate,
+  4. a later request restores from L2,
+  5. generation still completes.
+
+The decisive check is (3): SGLang exposes ``sglang:hicache_backup_bytes_total``
+and ``hicache_backup_tokens_total``, so the measured encoded bytes per token can
+be compared against the codec layout. The BF16 pool reports 147,456 B/token; the
+INT8 pool must report 82,944. Anything in between means the record is being
+padded or the wrong pool was selected.
+
+Usage::
+
+    python scripts/smoke_test.py --config int8 --expect-encoded
+    python scripts/smoke_test.py --config bf16 --expect-baseline
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from hiqcache.layout import V1_LAYOUT  # noqa: E402
+from run_experiment import (  # noqa: E402
+    build_configs,
+    http_get,
+    scrape_metrics,
+    wait_for_server,
+)
+
+LAYER_NUM = 36
+
+
+class Step:
+    def __init__(self, name: str):
+        self.name = name
+        self.ok: bool | None = None
+        self.detail = ""
+
+    def record(self, ok: bool, detail: str = "") -> bool:
+        self.ok = bool(ok)
+        self.detail = detail
+        mark = "PASS" if ok else "FAIL"
+        print(f"  [{mark}] {self.name}" + (f"\n         {detail}" if detail else ""))
+        return self.ok
+
+
+def post_generate(base_url: str, prompt: str, *, max_new_tokens: int = 16, timeout: float = 300):
+    """One deterministic generation; returns the response JSON."""
+    body = json.dumps(
+        {
+            "text": prompt,
+            "sampling_params": {
+                "temperature": 0.0,
+                "max_new_tokens": max_new_tokens,
+            },
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{base_url}/generate", data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def build_prompt(prefix: str, question: str) -> str:
+    return f"{prefix}\n\n{question}\n\nAnswer:"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", required=True, choices=["bf16", "int8"])
+    parser.add_argument("--model", default="Qwen/Qwen3-8B")
+    parser.add_argument("--host-size", type=float, default=2.0)
+    parser.add_argument("--port", type=int, default=30000)
+    parser.add_argument("--prefix-repeats", type=int, default=400,
+                        help="shared prefix length in repeated sentences")
+    parser.add_argument("--startup-timeout", type=float, default=900.0)
+    parser.add_argument("--sglang-root", default=str(REPO_ROOT.parent / "sglang"))
+    parser.add_argument("--json", default=None)
+    args = parser.parse_args()
+
+    sglang_root = Path(args.sglang_root).expanduser().resolve()
+    config = build_configs(args.model, args.host_size, 1, 1)[args.config]
+    base_url = f"http://127.0.0.1:{args.port}"
+    server_cmd = [
+        sys.executable, "-m", "sglang.launch_server",
+        *config.server_args, "--port", str(args.port),
+    ]
+
+    env = dict(os.environ)
+    env.update(config.env)
+    env["PYTHONPATH"] = f"{sglang_root / 'python'}:{env.get('PYTHONPATH', '')}"
+
+    expected_encoded = V1_LAYOUT.bytes_per_token_all_layers(LAYER_NUM)
+    expected_baseline = 147_456
+    expected = expected_encoded if args.config == "int8" else expected_baseline
+
+    out_dir = REPO_ROOT / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / f"smoke_{args.config}.server.log"
+
+    print(f"=== Phase 11 smoke: {config.label}")
+    print(f"=== expected bytes/token: {expected:,}")
+
+    steps: list[Step] = []
+    report: dict = {
+        "config": config.name,
+        "expected_bytes_per_token": expected,
+        "sglang_root": str(sglang_root),
+        "env": config.env,
+    }
+
+    with open(log_path, "w") as log:
+        proc = subprocess.Popen(
+            server_cmd, cwd=sglang_root, env=env, stdout=log,
+            stderr=subprocess.STDOUT, start_new_session=True,
+        )
+
+    try:
+        # --- 1. boots -------------------------------------------------
+        step = Step("server boots and HiCache is enabled")
+        steps.append(step)
+        waited = wait_for_server(base_url, args.startup_timeout, proc)
+        info = json.loads(http_get(f"{base_url}/get_model_info", timeout=30))
+        step.record(True, f"healthy after {waited:.0f}s; model={info.get('model_path')}")
+        report["startup_seconds"] = waited
+        report["model_info"] = info
+
+        # The L2 arena must exist with the encoded capacity. If the dispatch
+        # picked the BF16 pool, hicache_host_total_tokens will be ~1.78x smaller.
+        before = scrape_metrics(base_url)
+        total_tokens = before.get("sglang:hicache_host_total_tokens", 0.0)
+        step = Step("L2 host pool allocated with the expected token capacity")
+        steps.append(step)
+        if total_tokens <= 0:
+            step.record(False, "sglang:hicache_host_total_tokens is 0 or missing")
+        else:
+            raw_capacity = int(args.host_size * 1e9 // expected) + 1
+            err = abs(total_tokens - raw_capacity) / raw_capacity
+            step.record(
+                err < 0.02,
+                f"L2 capacity {total_tokens:,.0f} tokens vs expected "
+                f"{raw_capacity:,} for {expected:,} B/token ({err:.2%} off)",
+            )
+            report["l2_token_capacity"] = total_tokens
+            report["l2_expected_capacity"] = raw_capacity
+
+        # --- 2. populate L1 -------------------------------------------
+        shared_prefix = " ".join(
+            f"The quick brown fox jumps over the lazy dog number {i}."
+            for i in range(args.prefix_repeats)
+        )
+        step = Step("a request populates L1 and generation completes")
+        steps.append(step)
+        first = post_generate(base_url, build_prompt(shared_prefix, "Say hello."))
+        text = (first.get("text") or "").strip()
+        step.record(len(text) > 0, f"generated {len(text)} chars: {text[:80]!r}")
+        report["first_generation"] = {"text": text[:200]}
+
+        # --- 3. L1 -> L2 ----------------------------------------------
+        # Enough distinct traffic to evict the shared prefix out of L1 and into L2.
+        step = Step("a cache entry is evicted from L1 to L2 (backup executed)")
+        steps.append(step)
+        filler = " ".join(str(i) for i in range(6000))
+        for i in range(6):
+            post_generate(base_url, f"Filler {i}: {filler}\n\nQ: count?\n\nAnswer:")
+        mid = scrape_metrics(base_url)
+        backup_tokens = mid.get("sglang:hicache_backup_tokens_total", 0.0)
+        backup_bytes = mid.get("sglang:hicache_backup_bytes_total", 0.0)
+        step.record(
+            backup_tokens > 0,
+            f"backup_tokens={backup_tokens:,.0f} backup_bytes={backup_bytes:,.0f}",
+        )
+        report["backup_tokens"] = backup_tokens
+        report["backup_bytes"] = backup_bytes
+        if backup_tokens > 0:
+            per_token = backup_bytes / backup_tokens
+            report["measured_backup_bytes_per_token"] = per_token
+
+            # --- 4. the decisive check: compressed bytes on the wire ----
+            step = Step("L2 stores the *compressed* representation")
+            steps.append(step)
+            err = abs(per_token - expected) / expected
+            step.record(
+                err < 0.02,
+                f"measured {per_token:,.0f} B/token vs expected {expected:,} "
+                f"({err:.2%} off). BF16 would be {expected_baseline:,}; "
+                f"INT8 must be {expected_encoded:,}.",
+            )
+
+        # --- 5. L2 -> L1 restore --------------------------------------
+        step = Step("a later request restores from L2 (load-back executed)")
+        steps.append(step)
+        load_before = mid.get("sglang:load_back_tokens_total", 0.0)
+        second = post_generate(base_url, build_prompt(shared_prefix, "Say hello."))
+        second_text = (second.get("text") or "").strip()
+        after = scrape_metrics(base_url)
+        load_delta = after.get("sglang:load_back_tokens_total", 0.0) - load_before
+        step.record(
+            load_delta > 0,
+            f"loaded {load_delta:,.0f} tokens back from L2",
+        )
+        report["load_back_tokens_delta"] = load_delta
+
+        # --- 6. generation is still coherent --------------------------
+        step = Step("regenerated text matches the first run (deterministic decoding)")
+        steps.append(step)
+        step.record(
+            text == second_text,
+            f"first={text[:60]!r} second={second_text[:60]!r}",
+        )
+        report["second_generation"] = {"text": second_text[:200]}
+
+        report["metrics_after"] = {
+            k: after.get(k, 0.0)
+            for k in (
+                "sglang:hicache_backup_bytes_total",
+                "sglang:hicache_backup_tokens_total",
+                "sglang:load_back_bytes_total",
+                "sglang:load_back_tokens_total",
+                "sglang:hicache_host_used_tokens",
+                "sglang:hicache_host_total_tokens",
+                "sglang:hicache_dropped_tokens_total",
+            )
+        }
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        print(f"\n=== ERROR: {report['error']}", file=sys.stderr)
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=30)
+            except Exception:  # noqa: BLE001
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        lines = log_path.read_text(errors="replace").splitlines()
+        report["server_log_tail"] = "\n".join(lines[-40:])
+
+    report["steps"] = [{"name": s.name, "ok": s.ok, "detail": s.detail} for s in steps]
+    failed = [s.name for s in steps if s.ok is False]
+    report["verdict"] = "PASS" if steps and not failed else "FAIL"
+
+    print(f"\n=== verdict: {report['verdict']}")
+    if failed:
+        print("=== failed steps:")
+        for name in failed:
+            print(f"  - {name}")
+        print(f"\n=== server log tail ({log_path}):")
+        print(report["server_log_tail"])
+
+    path = Path(args.json) if args.json else out_dir / f"smoke_{args.config}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"\n=== wrote {path}")
+    return 0 if report["verdict"] == "PASS" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

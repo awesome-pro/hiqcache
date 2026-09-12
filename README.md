@@ -155,11 +155,11 @@ python scripts/conformance.py generate --device cuda --expect results/conformanc
 ```
 
 A digest mismatch means the bug is in the codec or a backend op — find it in
-seconds instead of after a failed multi-hour SGLang run. See `docs/pod-runbook.md`.
+seconds instead of after a failed multi-hour SGLang run. See `docs/pod-guide.md` (step by step) and `docs/pod-runbook.md` (reference).
 
 ## Reproduce (GPU)
 
-See `docs/pod-runbook.md`. Requires the SGLang fork at
+See `docs/pod-guide.md` (step by step) and `docs/pod-runbook.md` (reference). Requires the SGLang fork at
 `515f5be77e74761c269e007ac41a5895191a1b7d`.
 
 ## References

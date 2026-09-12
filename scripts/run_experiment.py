@@ -1,0 +1,483 @@
+"""Phase 12/13 experiment driver: run one configuration, capture labelled metrics.
+
+Design goal: make the pod run *one command per configuration*, with the
+phase boundary (idsle vs active) handled correctly. SGLang's HiCache counters are
+cumulative process-lifetime values, so comparing two configurations naively
+includes server startup and warmup. This driver snapshots ``/metrics`` around the
+measured phase and reports deltas, while keeping absolute totals for context.
+
+Configurations (PROJECT.md Phase 12):
+
+    baseline   HiCache disabled entirely -- pure prefill recomputation
+    bf16       standard SGLang HiCache, BF16 L2
+    int8       HiQCache, compressed INT8 L2
+
+Usage::
+
+    python scripts/run_experiment.py --config int8 --tag exp-b-8gb
+    python scripts/run_experiment.py --config bf16 --tag exp-b-8gb \\
+        --workload reusable-prefixes --num-groups 8 --gsp-question-len 2048
+
+Results go to ``results/exp_<config>_<tag>.json``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from hiqcache.layout import V1_LAYOUT  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Configuration definitions
+# ---------------------------------------------------------------------------
+
+HF_CACHE_HINT = "set HF_HOME / HF_HUB_CACHE to a persistent volume before running"
+
+
+@dataclass
+class Config:
+    name: str
+    label: str
+    env: dict
+    server_args: list
+    host_size_gb: float = 8.0
+
+
+def build_configs(model: str, host_size_gb: float, tp: int, page_size: int) -> dict:
+    """The three Phase 12 configurations, sharing every non-codec setting."""
+    common = [
+        "--model-path", model,
+        "--tp-size", str(tp),
+        "--page-size", str(page_size),
+        "--trust-remote-code",
+        "--enable-metrics",
+    ]
+    hicache_common = [
+        "--enable-hierarchical-cache",
+        "--hicache-io-backend", "kernel",
+        "--hicache-mem-layout", "layer_first",
+        "--hicache-write-policy", "write_through",
+        "--hicache-size", f"{host_size_gb:g}",
+    ]
+    return {
+        # A: no reusable L2 at all -> every L1 miss is a prefill recomputation.
+        "baseline": Config(
+            name="baseline",
+            label="A: HiCache disabled (prefill recompute)",
+            env={},
+            server_args=list(common),
+            host_size_gb=0.0,
+        ),
+        # B: standard BF16 L2.
+        "bf16": Config(
+            name="bf16",
+            label="B: standard HiCache, BF16 L2",
+            env={"SGLANG_EXPERIMENTAL_HICACHE_INT8": "0"},
+            server_args=common + hicache_common,
+            host_size_gb=host_size_gb,
+        ),
+        # C: HiQCache, compressed INT8 L2.
+        "int8": Config(
+            name="int8",
+            label="C: HiQCache, compressed INT8 L2",
+            env={"SGLANG_EXPERIMENTAL_HICACHE_INT8": "1"},
+            server_args=common + hicache_common,
+            host_size_gb=host_size_gb,
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Workloads
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Workload:
+    name: str
+    bench_args: list
+    description: str
+
+
+def build_workloads(args) -> dict:
+    """The Phase 13 workloads."""
+    return {
+        # Baseline sanity: modest reusable prefixes that fit either L2.
+        "small": Workload(
+            name="small",
+            description="reusable prefixes that fit a BF16 L2 (cache-hit TTFT)",
+            bench_args=[
+                "--dataset-name", "generated-shared-prefix",
+                "--gsp-num-groups", "16",
+                "--gsp-prompts-per-group", "8",
+                "--gsp-system-prompt-len", "1024",
+                "--gsp-question-len", "256",
+                "--gsp-output-len", "64",
+                "--num-prompts", "128",
+                "--max-concurrency", "16",
+                "--cache-report",
+            ],
+        ),
+        # Experiment B: aggregate reusable prefixes that do NOT fit a BF16 L2
+        # but DO fit the INT8 L2. The token budget is computed from the codec
+        # layout so this cannot drift from the measured size_per_token.
+        "reusable-prefixes": Workload(
+            name="reusable-prefixes",
+            description=(
+                "aggregate reusable prefixes sized between the BF16 and INT8 "
+                "L2 capacities (the real end-to-end value proposition)"
+            ),
+            bench_args=[
+                "--dataset-name", "generated-shared-prefix",
+                "--gsp-num-groups", str(args.num_groups),
+                "--gsp-prompts-per-group", str(args.prompts_per_group),
+                "--gsp-system-prompt-len", str(args.gsp_question_len),
+                "--gsp-question-len", "64",
+                "--gsp-output-len", "32",
+                "--num-prompts", str(args.num_groups * args.prompts_per_group),
+                "--max-concurrency", str(args.max_concurrency),
+                "--cache-report",
+            ],
+        ),
+    }
+
+
+def capacity_budget(host_size_gb: float, layer_num: int) -> dict:
+    """Token capacities for this host budget, from the codec layout.
+
+    Mirrors ``HostKVCache.__init__``: ``size = int(host_size * 1e9 // size_per_token)``
+    then ``page_num = size // page_size + 1``. page_size is 1 here.
+    """
+    baseline_per_token = 147_456
+    encoded_per_token = V1_LAYOUT.bytes_per_token_all_layers(layer_num)
+    out = {}
+    for name, per_token in (("bf16", baseline_per_token), ("int8", encoded_per_token)):
+        raw = int(host_size_gb * 1e9 // per_token)
+        out[name] = {"size_per_token": per_token, "token_capacity": raw + 1}
+    out["gain"] = out["int8"]["token_capacity"] / out["bf16"]["token_capacity"]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Server lifecycle
+# ---------------------------------------------------------------------------
+
+
+def http_get(url: str, timeout: float = 10.0) -> str:
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return resp.read().decode()
+
+
+def wait_for_server(base_url: str, timeout_s: float, proc: subprocess.Popen) -> float:
+    """Block until /health responds. Returns seconds waited."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"server exited during startup with code {proc.returncode}; "
+                f"check {proc.args}"
+            )
+        try:
+            http_get(f"{base_url}/health", timeout=5)
+            return timeout_s - (deadline - time.time())
+        except (urllib.error.URLError, OSError):
+            time.sleep(2)
+    raise TimeoutError(f"server not healthy after {timeout_s:.0f}s")
+
+
+METRIC_RE = re.compile(r"^(sglang:[a-z_0-9]+)(\{[^}]*\})?\s+([0-9.eE+-]+)$")
+
+
+def scrape_metrics(base_url: str) -> dict:
+    """Parse the Prometheus endpoint into ``{metric_name: summed_value}``.
+
+    Sums across label sets, which is what we want for totals; per-label detail is
+    preserved in the raw text saved alongside the JSON.
+    """
+    text = http_get(f"{base_url}/metrics", timeout=30)
+    totals: dict[str, float] = {}
+    for line in text.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        match = METRIC_RE.match(line.strip())
+        if not match:
+            continue
+        name, _, value = match.groups()
+        try:
+            totals[name] = totals.get(name, 0.0) + float(value)
+        except ValueError:
+            continue
+    return totals
+
+
+#: Metrics that matter, with the PROJECT.md phase each answers.
+TRACKED = {
+    "sglang:hicache_backup_bytes_total": "Phase 14 D2H: total backup bytes",
+    "sglang:hicache_backup_tokens_total": "Phase 14 D2H: tokens backed up",
+    "sglang:hicache_backup_duration_seconds": "Phase 14 D2H: total backup time",
+    "sglang:load_back_bytes_total": "Phase 14 H2D: total restore bytes",
+    "sglang:load_back_tokens_total": "Phase 14 H2D: tokens restored",
+    "sglang:load_back_duration_seconds": "Phase 14 H2D: total restore time",
+    "sglang:hicache_host_used_tokens": "Phase 14 storage: L2 tokens in use",
+    "sglang:hicache_host_total_tokens": "Phase 14 storage: L2 capacity",
+    "sglang:hicache_dropped_tokens_total": "Phase 14 storage: L2 evictions",
+    "sglang:cache_hit_rate": "Phase 14 serving: prefix cache hit rate",
+    "sglang:prompt_tokens_total": "Phase 14 serving: prefill tokens",
+    "sglang:generation_tokens_total": "Phase 14 serving: decode tokens",
+}
+
+
+def derive(metrics: dict) -> dict:
+    """Turn raw counters into the derived figures PROJECT.md asks for."""
+    out = {}
+    backup_bytes = metrics.get("sglang:hicache_backup_bytes_total", 0.0)
+    backup_tokens = metrics.get("sglang:hicache_backup_tokens_total", 0.0)
+    backup_time = metrics.get("sglang:hicache_backup_duration_seconds", 0.0)
+    load_bytes = metrics.get("sglang:load_back_bytes_total", 0.0)
+    load_tokens = metrics.get("sglang:load_back_tokens_total", 0.0)
+    load_time = metrics.get("sglang:load_back_duration_seconds", 0.0)
+
+    if backup_tokens > 0:
+        out["measured_backup_bytes_per_token"] = backup_bytes / backup_tokens
+    if load_tokens > 0:
+        out["measured_load_bytes_per_token"] = load_bytes / load_tokens
+    if backup_time > 0:
+        out["backup_GB_per_s"] = backup_bytes / backup_time / 1e9
+    if load_time > 0:
+        out["load_GB_per_s"] = load_bytes / load_time / 1e9
+    used = metrics.get("sglang:hicache_host_used_tokens", 0.0)
+    total = metrics.get("sglang:hicache_host_total_tokens", 0.0)
+    if total > 0:
+        out["l2_utilisation"] = used / total
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", required=True, choices=["baseline", "bf16", "int8"])
+    parser.add_argument("--tag", required=True, help="label for this run, e.g. exp-b-8gb")
+    parser.add_argument("--model", default="Qwen/Qwen3-8B")
+    parser.add_argument("--host-size", type=float, default=8.0, help="decimal GB")
+    parser.add_argument("--tp", type=int, default=1)
+    parser.add_argument("--page-size", type=int, default=1)
+    parser.add_argument("--layer-num", type=int, default=36)
+    parser.add_argument("--port", type=int, default=30000)
+    parser.add_argument("--workload", default="small", choices=["small", "reusable-prefixes"])
+    parser.add_argument("--num-groups", type=int, default=8)
+    parser.add_argument("--prompts-per-group", type=int, default=4)
+    parser.add_argument("--gsp-question-len", type=int, default=2048)
+    parser.add_argument("--max-concurrency", type=int, default=8)
+    parser.add_argument("--startup-timeout", type=float, default=900.0)
+    parser.add_argument("--flush-cache", action="store_true", default=True)
+    parser.add_argument("--bench-python", default=sys.executable)
+    parser.add_argument("--sglang-root", default=str(REPO_ROOT.parent / "sglang"))
+    parser.add_argument("--dry-run", action="store_true", help="print commands only")
+    args = parser.parse_args()
+
+    sglang_root = Path(args.sglang_root).expanduser().resolve()
+    config = build_configs(args.model, args.host_size, args.tp, args.page_size)[args.config]
+    workload = build_workloads(args)[args.workload]
+    budget = capacity_budget(args.host_size, args.layer_num) if args.host_size > 0 else {}
+
+    base_url = f"http://127.0.0.1:{args.port}"
+    server_cmd = [sys.executable, "-m", "sglang.launch_server", *config.server_args,
+                  "--port", str(args.port)]
+    bench_cmd = [args.bench_python, "-m", "sglang.benchmark.serving",
+                 "--backend", "sglang", "--base-url", base_url,
+                 "--model", args.model, *workload.bench_args]
+
+    if args.dry_run:
+        print(f"config   : {config.label}")
+        print(f"workload : {workload.name} -- {workload.description}")
+        print(f"env      : {config.env}")
+        print(f"server   : cd {sglang_root} && {' '.join(server_cmd)}")
+        print(f"bench    : cd {sglang_root} && {' '.join(bench_cmd)}")
+        if budget:
+            print(f"budget   : bf16={budget['bf16']['token_capacity']:,} tokens, "
+                  f"int8={budget['int8']['token_capacity']:,} tokens "
+                  f"({budget['gain']:.4f}x)")
+        return 0
+
+    if not (sglang_root / "python" / "sglang").is_dir():
+        print(f"ERROR: SGLang fork not found at {sglang_root}", file=sys.stderr)
+        return 2
+
+    env = dict(os.environ)
+    env.update(config.env)
+    env["PYTHONPATH"] = f"{sglang_root / 'python'}:{env.get('PYTHONPATH', '')}"
+    env.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
+    out_dir = REPO_ROOT / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"exp_{config.name}_{args.tag}"
+    server_log = out_dir / f"{stem}.server.log"
+
+    print(f"=== {config.label}")
+    print(f"=== workload: {workload.name} -- {workload.description}")
+    if budget:
+        print(f"=== L2 budget @ {args.host_size:g} GB: "
+              f"bf16 {budget['bf16']['token_capacity']:,} tokens | "
+              f"int8 {budget['int8']['token_capacity']:,} tokens "
+              f"({budget['gain']:.4f}x)")
+    print(f"=== server log: {server_log}")
+
+    with open(server_log, "w") as log:
+        proc = subprocess.Popen(
+            server_cmd, cwd=sglang_root, env=env, stdout=log,
+            stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    result: dict = {
+        "config": config.name,
+        "config_label": config.label,
+        "tag": args.tag,
+        "workload": asdict(workload),
+        "host_size_gb": args.host_size,
+        "tp": args.tp,
+        "page_size": args.page_size,
+        "model": args.model,
+        "env": config.env,
+        "server_args": server_cmd,
+        "sglang_sha": _git_sha(sglang_root),
+        "capacity_budget": budget,
+        "ok": False,
+    }
+
+    try:
+        waited = wait_for_server(base_url, args.startup_timeout, proc)
+        print(f"=== server healthy after {waited:.0f}s")
+        result["startup_seconds"] = waited
+
+        before = scrape_metrics(base_url)
+        result["metrics_absolute_before"] = {
+            k: before.get(k, 0.0) for k in TRACKED
+        }
+
+        # Flush the prefix cache so the measured phase starts cold; otherwise a
+        # previous run's L1/L2 state leaks in and the hit rate is meaningless.
+        if args.flush_cache:
+            try:
+                http_get(f"{base_url}/flush_cache", timeout=120)
+                print("=== flushed prefix cache")
+                result["flushed_cache"] = True
+            except Exception as exc:  # noqa: BLE001
+                print(f"=== WARNING: flush_cache failed ({exc}); results may be warm")
+                result["flushed_cache"] = False
+
+        print(f"=== running benchmark")
+        t0 = time.time()
+        bench = subprocess.run(
+            bench_cmd, cwd=sglang_root, env=env, capture_output=True, text=True
+        )
+        result["benchmark_seconds"] = time.time() - t0
+        result["benchmark_stdout"] = bench.stdout
+        result["benchmark_stderr"] = bench.stderr[-8000:]
+        result["benchmark_returncode"] = bench.returncode
+        print(bench.stdout[-4000:] if bench.stdout else "(no benchmark stdout)")
+        if bench.returncode != 0:
+            print(f"=== benchmark FAILED (rc={bench.returncode})", file=sys.stderr)
+            print(bench.stderr[-4000:], file=sys.stderr)
+
+        after = scrape_metrics(base_url)
+        result["metrics_absolute_after"] = {k: after.get(k, 0.0) for k in TRACKED}
+        delta = {k: after.get(k, 0.0) - before.get(k, 0.0) for k in TRACKED}
+        result["metrics_delta"] = delta
+        result["derived"] = derive(delta)
+        result["ok"] = bench.returncode == 0
+
+        print("\n=== measured deltas (this workload only)")
+        for key, value in delta.items():
+            print(f"  {key:<48} {value:>18.4f}   {TRACKED[key]}")
+        print("\n=== derived")
+        for key, value in result["derived"].items():
+            print(f"  {key:<48} {value:>18.4f}")
+
+        # The headline check: does the measured encoded bytes/token match the
+        # layout? If not, the compression is not actually being applied.
+        per_token = result["derived"].get("measured_backup_bytes_per_token")
+        if config.name == "int8" and per_token:
+            expected = V1_LAYOUT.bytes_per_token_all_layers(args.layer_num)
+            err = abs(per_token - expected) / expected
+            result["encoded_bytes_per_token_check"] = {
+                "expected": expected,
+                "measured": per_token,
+                "relative_error": err,
+                "pass": err < 0.02,
+            }
+            verdict = "PASS" if err < 0.02 else "FAIL"
+            print(f"\n=== encoded bytes/token: measured {per_token:,.0f} vs layout "
+                  f"{expected:,} ({err:.2%}) -> {verdict}")
+        elif config.name == "bf16" and per_token:
+            expected = 147_456
+            print(f"\n=== baseline bytes/token: measured {per_token:,.0f} vs "
+                  f"expected {expected:,}")
+
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        print(f"=== ERROR: {result['error']}", file=sys.stderr)
+    finally:
+        _terminate(proc)
+        tail = _tail(server_log, 40)
+        result["server_log_tail"] = tail
+
+    path = out_dir / f"{stem}.json"
+    path.write_text(json.dumps(result, indent=2) + "\n")
+    print(f"\n=== wrote {path}")
+    return 0 if result.get("ok") else 1
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _git_sha(root: Path) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _tail(path: Path, n: int) -> str:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-n:])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
