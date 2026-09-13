@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -211,6 +212,62 @@ def probe_jit_compile() -> None:
             )
 
 
+def probe_version_skew(torch) -> None:
+    """Compare the CUDA version torch was built for against the image's toolkit.
+
+    These are two different things and conflating them causes a lot of wasted GPU
+    time:
+
+    * torch bundles its own CUDA runtime inside the wheel, so the *image's*
+      toolkit version is irrelevant to running torch;
+    * but the image's ``nvcc`` is what compiles SGLang's JIT kernels, so a
+      mismatch there produces header errors during `load_jit`.
+
+    The driver is backwards-compatible, so only it has to be new enough. A skew
+    between ``torch.version.cuda`` (say 12.9) and the toolkit (say 12.8) is
+    survivable for pure-torch work and fatal for compiled kernels. Reported as a
+    warning with that distinction spelled out, because it is actionable but not
+    always blocking.
+    """
+    torch_cuda = getattr(torch.version, "cuda", None)
+    if not torch_cuda:
+        return
+    nvcc = shutil.which("nvcc")
+    if not nvcc:
+        return
+    try:
+        out = subprocess.run(
+            [nvcc, "--version"], capture_output=True, text=True, timeout=60
+        ).stdout
+    except Exception:  # noqa: BLE001
+        return
+    match = re.search(r"release (\d+)\.(\d+)", out)
+    if not match:
+        return
+    nvcc_major, nvcc_minor = int(match.group(1)), int(match.group(2))
+    try:
+        torch_major, torch_minor = (int(p) for p in torch_cuda.split(".")[:2])
+    except ValueError:
+        return
+
+    same = (nvcc_major, nvcc_minor) == (torch_major, torch_minor)
+    detail = (
+        f"torch built for CUDA {torch_cuda}, image nvcc is {nvcc_major}.{nvcc_minor}"
+    )
+    if same:
+        add("torch CUDA version matches the image toolkit", True, detail)
+    else:
+        add(
+            "torch CUDA version matches the image toolkit",
+            False,
+            detail
+            + " -- pure-torch work (codec, conformance) is unaffected, but the "
+            "JIT-compiled HiCache kernels may fail to build. Prefer an image "
+            "whose toolkit matches torch; see docs/image-compatibility.md",
+            fatal=False,
+        )
+
+
 def probe_git_auth() -> None:
     """Is GitHub SSH available? Informational only -- nothing requires it.
 
@@ -259,6 +316,7 @@ def main() -> int:
     torch = probe_torch()
     if torch is not None:
         probe_cuda_toolkit()
+        probe_version_skew(torch)
     probe_build_tools()
     if torch is not None:
         probe_jit_compile()

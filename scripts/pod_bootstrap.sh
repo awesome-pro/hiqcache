@@ -42,12 +42,18 @@ cd "$WORKSPACE"
 # ---------------------------------------------------------------- provenance
 say "Recording provenance (required by PROJECT.md Phase 14)"
 mkdir -p provenance
+echo "  writing provenance/hardware.txt (a few seconds; plain nvidia-smi can pause briefly)"
 {
   echo "=== captured $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
   nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
-  nvidia-smi | head -12
-  echo "--- cpu ---"; lscpu | head -20 || true
-  echo "--- memory ---"; free -h || true
+  echo "--- driver ---"; nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  echo "--- cpu ---"; lscpu 2>/dev/null | head -20 || echo "lscpu unavailable"
+  echo "--- memory ---"; free -h 2>/dev/null || echo "free unavailable"
+  echo "--- python / torch ---"
+  python -c "import sys, torch; print('python', sys.version.split()[0]);
+print('torch', torch.__version__); print('torch cuda', torch.version.cuda);
+print('gpu', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')" \
+    2>/dev/null || echo "torch not importable"
   echo "--- nvcc ---"; nvcc --version 2>/dev/null | tail -3 || echo "no nvcc"
 } > provenance/hardware.txt
 cat provenance/hardware.txt

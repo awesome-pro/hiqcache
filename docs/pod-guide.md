@@ -3,8 +3,12 @@
 Everything to do on a rented GPU, in order. Each step says what it proves, what
 you should see, and what to do if it fails.
 
-Target: **1× A6000 48 GB**, 64+ GB RAM, 150+ GB disk. Runtime images on RunPod
-with CUDA 12.4+ and PyTorch preinstalled are the least friction.
+Target: **1× A6000 48 GB**, 64+ GB RAM, 150+ GB disk.
+
+**The image matters more than the hardware.** SGLang pins `torch==2.13.0`, which
+has no CUDA 12.8 build, so a mismatched image wastes a run. Use
+`runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404` — see step 1 and
+`docs/image-compatibility.md`.
 
 **Budget roughly 3–5 hours of GPU time** for steps 1–7, plus however long the
 benchmark sweeps take. Steps 1–2 are the failure-prone ones; after step 1 passes
@@ -34,9 +38,28 @@ the transfer kernels, and stream ordering. Those are steps 3–5 below.
 
 ## Step 1 — Rent the pod and get the code on it
 
-Choose an image with CUDA 12.4+ and PyTorch. **Expect to pay for a few minutes
-of failed startups** if the image is unusual; if SGLang's build is fighting you
-after ~30 minutes, switch images rather than debugging the image.
+### Pick a matching image first
+
+This is worth two minutes and saves a wasted run. SGLang pins **`torch==2.13.0`**,
+and PyTorch publishes **no CUDA 12.8 build of it** — the cu128 line stops at
+2.11.0. Full matrix and reasoning: `docs/image-compatibility.md`.
+
+Use one of these (torch 2.13.0, exact match for the pin):
+
+```text
+runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404   <- preferred
+runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404
+```
+
+Prefer **cu1290**: it needs a less recent driver than cu1300 and matches what
+SGLang can actually be built against. A CUDA 12.8 image will install a torch
+built for a different CUDA version, and no `pip install` fixes that — the CUDA
+runtime is bundled inside the torch wheel, so only the *driver* needs to be new
+enough; the *toolkit* (which compiles the JIT kernels) has to match.
+
+Everything else about the pod — A6000 48 GB, 62 GB RAM, 150 GB disk — is correct.
+
+### Get the code on it
 
 ```bash
 # On the pod
