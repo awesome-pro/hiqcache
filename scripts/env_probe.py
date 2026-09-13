@@ -212,7 +212,18 @@ def probe_jit_compile() -> None:
 
 
 def probe_git_auth() -> None:
-    """pod_bootstrap.sh clones over SSH, so this must work before it runs."""
+    """Is GitHub SSH available? Informational only -- nothing requires it.
+
+    Both repos are public and everything is cloned over HTTPS by default, so a
+    missing key is not a problem. This check exists only to tell you whether you
+    *could* push results back to the repo, which is one of two ways to get data
+    off the pod. Reported as a warning, never as a blocker, because "no key on
+    the pod" is the normal state and rsync works without it.
+
+    Note the common confusion: ``git@github.com:`` failing with "Permission
+    denied (publickey)" says nothing about whether a repo is public. SSH always
+    requires a key; public repos cloned over HTTPS need none.
+    """
     try:
         proc = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
@@ -222,14 +233,16 @@ def probe_git_auth() -> None:
         combined = (proc.stdout + proc.stderr).strip()
         ok = "successfully authenticated" in combined
         add(
-            "GitHub SSH auth works (needed by pod_bootstrap.sh)",
+            "GitHub SSH key present (optional: only needed to push results)",
             ok,
-            combined.splitlines()[-1][:160] if combined else "no output",
+            "authenticated" if ok
+            else "no key on this pod -- harmless; repos clone over HTTPS and "
+                 "results come back via rsync",
             fatal=False,
         )
     except Exception as exc:  # noqa: BLE001
         add(
-            "GitHub SSH auth works (needed by pod_bootstrap.sh)",
+            "GitHub SSH key present (optional: only needed to push results)",
             False,
             f"{type(exc).__name__}: {exc}",
             fatal=False,

@@ -41,8 +41,8 @@ after ~30 minutes, switch images rather than debugging the image.
 ```bash
 # On the pod
 cd /workspace
-git clone git@github.com:awesome-pro/hiqcache.git
-cd hiqcache
+git clone https://github.com/awesome-pro/hiqcache.git   # HTTPS: public repo,
+cd hiqcache                                             # no key needed
 bash scripts/pod_bootstrap.sh /workspace
 ```
 
@@ -354,7 +354,9 @@ regress to nothing. Two independent mitigations — use both:
    ```
 
    Git is the second line of defence: commit the JSON into the `hiqcache` repo
-   and push. Then a dead pod costs GPU time, never data.
+   and push. Then a dead pod costs GPU time, never data. This is the only step
+   that needs a GitHub credential on the pod, and it is optional — rsync alone is
+   enough.
 
 2. **Attach a network volume** if you expect to iterate across sessions, and set
    `HF_HOME` to it so the Qwen3-8B download happens once:
@@ -363,19 +365,40 @@ regress to nothing. Two independent mitigations — use both:
    export HF_HOME=/workspace/hf
    ```
 
-**Verify GitHub auth on the pod** before relying on `git clone` inside
-`pod_bootstrap.sh`. The script uses SSH URLs, so:
+### Cloning: use HTTPS, not SSH
+
+Both repos are **public**, so a fresh pod needs **no credentials at all**:
 
 ```bash
-ssh -T git@github.com          # expect: Hi <user>! You've successfully authenticated
+git clone https://github.com/awesome-pro/hiqcache.git
+git clone https://github.com/awesome-pro/sglang.git
 ```
 
-No key on the pod? Either add your public key in the RunPod pod settings, or
-clone over HTTPS with a token:
+`pod_bootstrap.sh` uses these HTTPS URLs by default and accepts overrides:
 
 ```bash
-git clone https://<TOKEN>@github.com/awesome-pro/hiqcache.git
+HICACHE_URL=... SGLANG_URL=... bash scripts/pod_bootstrap.sh /workspace
 ```
+
+**Do not reach for `git@github.com:` URLs.** SSH always requires a private key,
+and a fresh pod has none:
+
+```
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+```
+
+That error says nothing about whether the repo is public or whether it exists —
+it only means no key is present. Two ways out, in order of preference:
+
+1. **Use the HTTPS URL** (above). No key, no token, works immediately.
+2. If you specifically want SSH (e.g. to push results), add a deploy key in the
+   repo settings and mount it on the pod, then verify with
+   `ssh -T git@github.com`. Note that a key belongs to a *user or deploy key*,
+   not to the pod, so this has to be set up per pod template.
+
+`scripts/env_probe.py` reports whether an SSH key is present, as a **warning
+only**. A pod with no key is the normal case and passes GATE 0.
 
 **Keep the pod alive through step 4.** It contains a one-off, already-paid-for
 setup: pip environment, JIT kernel cache under `~/.cache/sglang`, and the model

@@ -36,7 +36,7 @@ the Mac.
 ## 1. Environment bootstrap
 
 ```bash
-git clone git@github.com:awesome-pro/hiqcache.git
+git clone https://github.com/awesome-pro/hiqcache.git
 cd hiqcache
 git checkout main
 
@@ -48,7 +48,7 @@ uv pip install --python .venv/bin/python torch pytest numpy
 Clone the SGLang fork with the implementation:
 
 ```bash
-git clone git@github.com:awesome-pro/sglang.git
+git clone https://github.com/awesome-pro/sglang.git
 cd sglang
 git checkout hiqcache/int8-l2
 git rev-parse HEAD        # e554c653bc..., on top of the pinned base

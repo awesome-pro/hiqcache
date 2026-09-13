@@ -7,11 +7,24 @@
 #
 # Usage:
 #   bash scripts/pod_bootstrap.sh /workspace
+#
+# Overrides (defaults work on a pod with no GitHub credentials at all):
+#   HICACHE_URL   repo to clone (default: HTTPS; public repo, needs no key)
+#   SGLANG_URL    repo to clone
+#   HICACHE_REF   branch/tag (default: main)
+#   SGLANG_REF    branch/tag (default: hiqcache/int8-l2)
 set -euo pipefail
 
 WORKSPACE="${1:-/workspace}"
 HICACHE_REF="${HICACHE_REF:-main}"
 SGLANG_REF="${SGLANG_REF:-hiqcache/int8-l2}"
+
+# HTTPS by default, deliberately. Both repos are public, and an SSH clone needs a
+# private key that a fresh pod does not have -- `git@github.com:` fails with
+# "Permission denied (publickey)" no matter how public the repo is. Override with
+# an SSH URL only if you have actually put a key on the pod.
+HICACHE_URL="${HICACHE_URL:-https://github.com/awesome-pro/hiqcache.git}"
+SGLANG_URL="${SGLANG_URL:-https://github.com/awesome-pro/sglang.git}"
 BASE_COMMIT="515f5be77e74761c269e007ac41a5895191a1b7d"
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -45,7 +58,7 @@ if [ -d hiqcache/.git ]; then
   git -C hiqcache fetch --quiet origin && git -C hiqcache checkout --quiet "$HICACHE_REF"
   git -C hiqcache pull --quiet --ff-only
 else
-  git clone git@github.com:awesome-pro/hiqcache.git
+  git clone "$HICACHE_URL"
   git -C hiqcache checkout "$HICACHE_REF"
 fi
 echo "hiqcache @ $(git -C hiqcache rev-parse --short HEAD)"
@@ -55,7 +68,7 @@ if [ -d sglang/.git ]; then
   git -C sglang fetch --quiet origin && git -C sglang checkout --quiet "$SGLANG_REF"
   git -C sglang pull --quiet --ff-only
 else
-  git clone git@github.com:awesome-pro/sglang.git
+  git clone "$SGLANG_URL"
   git -C sglang checkout "$SGLANG_REF"
 fi
 echo "sglang @ $(git -C sglang rev-parse --short HEAD)"
