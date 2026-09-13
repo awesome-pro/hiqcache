@@ -105,12 +105,16 @@ def jit_eligible(element_size: int, *, is_hip: bool = False) -> tuple[bool, dict
 
 
 def tma_eligible(element_size: int, *, page_size: int, is_hip: bool, sm_major: int) -> bool:
-    """Mirror of ``use_hicache_tma_kernel`` for a non-HIP, TMA-enabled build.
+    """Mirror of ``use_hicache_tma_kernel``.
 
-    Note ``_is_hip`` short-circuits it: the TMA kernel is HIP-only in this
-    revision, so on an NVIDIA pod this always returns False and the register
-    kernel is used. Recorded here because that is a surprising fact worth
-    asserting rather than assuming.
+    The TMA HiCache path is a **CUDA** path, not a HIP one. SGLang's first guard
+    is ``if _is_hip or not envs.SGLANG_HICACHE_TMA_TRANSFER: return False`` --
+    that is, TMA is *unavailable on HIP*. On CUDA it additionally needs sm_90+
+    and a row size divisible by 16.
+
+    On the planned A6000 (sm_86) this returns False, so the register JIT kernel
+    runs -- which is exactly the kernel whose template arithmetic
+    :func:`jit_eligible` validates above.
     """
     if is_hip:
         return False
@@ -219,7 +223,7 @@ class Preflight:
         self.add(
             "TMA path is inactive on an A6000 (sm_86)",
             tma is False,
-            "use_hicache_tma_kernel short-circuits on _is_hip; register kernel is used",
+            "TMA needs sm_90+; sm_86 falls back to the register JIT kernel",
             fatal=False,
             tma_eligible=tma,
         )
@@ -280,13 +284,20 @@ class Preflight:
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     dotted = _dotted(node.func)
+                    # Only true host-synchronising operations. Deliberately NOT
+                    # torch.cuda.current_stream() (a cheap lookup, no sync) or
+                    # Tensor.record_stream (a deallocation hint, no sync) -- both
+                    # are legitimate and flagging them hides real offenders.
                     if dotted in (
                         "torch.cuda.synchronize",
-                        "torch.cuda.current_stream",
+                        "torch.cuda.set_device",
                     ) or dotted.endswith(".item"):
                         offenders.append(dotted)
                 if isinstance(node, ast.Attribute) and node.attr == "cpu":
                     offenders.append(".cpu()")
+            # ``.cpu()`` also appears as ``.record_stream`` no; guard the
+            # specific spelling so the check reports what it actually found.
+            offenders = sorted(set(offenders))
             self.add(
                 "pool hot path has no host synchronisation",
                 not offenders,
@@ -297,16 +308,30 @@ class Preflight:
             )
             text = pool.read_text()
             for needle, label in (
-                ("element_dim=codec.ROW_BYTES // 2", "H2D bf16 reinterpretation"),
+                ("element_dim=codec.ROW_BYTES", "H2D element_dim is a full row"),
                 ("kv_cache_src_stride_bytes=codec.ROW_BYTES", "D2H src stride"),
                 ("kv_cache_dst_stride_bytes=codec.ROW_BYTES", "D2H dst stride"),
                 ("element_size=codec.ROW_BYTES", "D2H element_size"),
+                ("k_cache_dst=k_records", "H2D dst is the raw uint8 staging"),
+                ("k_cache_src=self.k_data_refs", "H2D src is the raw uint8 arena"),
             ):
                 self.add(
                     f"pool contains {label}",
                     needle in text,
                     needle if needle in text else f"MISSING: {needle}",
                 )
+            # Static guard for the bug that shipped once: run_one() binds ONE
+            # SymbolicDType across src and dst, so reinterpreting only one side
+            # of the H2D move as bf16 is rejected at runtime. Both sides must
+            # stay uint8 (a straight byte copy) or both must be viewed.
+            self.add(
+                "H2D mover does not reinterpret only one side",
+                ".view(torch.bfloat16)" not in text,
+                "no one-sided dtype reinterpretation in the H2D move"
+                if ".view(torch.bfloat16)" not in text
+                else "pool views a tensor as bf16; ensure BOTH sides are viewed "
+                     "or neither, since run_one binds a single dtype",
+            )
         else:
             self.add("pool source present", False, f"missing {pool}")
 

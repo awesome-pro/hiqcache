@@ -137,7 +137,7 @@ This is where six previously-unexecuted things get exercised for the first time:
 1. the JIT kernel compiled against `element_size = 1152`
 2. `cudaHostRegister` on the encoded arena
 3. the D2H all-layer move with a per-layer pointer table
-4. the H2D `element_dim = 576` bf16 reinterpretation
+4. the H2D byte copy at `element_dim = 1152` (uint8 on both sides)
 5. `index_select` / advanced-index scatter at device scale
 6. staging growth without cross-direction reallocation
 
@@ -147,7 +147,7 @@ This is where six previously-unexecuted things get exercised for the first time:
 | --- | --- | --- |
 | `Failed to load JIT HiCache kernel` | template reject for 1152 | `_tiles_across_lanes`; preflight already proved the arithmetic, so suspect the toolkit |
 | `Unsupported element_size` warning | same | confirm `preflight.py` still passes on the pod |
-| shape/stride assertion in the kernel | the `576` bf16 view | `mha_int8.py::load_to_device_per_layer` |
+| shape/stride or dtype assertion in the kernel | H2D dtype mismatch | `mha_int8.py::load_to_device_per_layer` |
 | wrong values but no error | pointer table staleness | `_rebuild_d2h_staging_tables` |
 | `cudaHostRegister` error | huge-page or granularity | `registration_granularity_bytes` in `init_kv_buffer` |
 

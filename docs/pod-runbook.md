@@ -177,7 +177,7 @@ the following has ever executed:**
 - the JIT HiCache kernel against a 1152-byte `element_size`
 - `cudaHostRegister` on the encoded arena
 - the D2H all-layer move with a per-layer pointer table
-- the H2D `element_dim = 576` bf16 reinterpretation trick
+- the H2D byte copy at `element_dim = 1152` (uint8 on both sides)
 - stream ordering around `on_layer_done`
 - `index_select` / advanced-index scatter at device scale
 

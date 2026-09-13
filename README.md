@@ -53,7 +53,14 @@ JIT kernel with **zero CUDA changes**.
 | HiQCache | 82,944 | **1.78×** |
 
 Under a fixed `--hicache-size=8` (decimal GB), that is **54,254 → 96,451 tokens**
-of L2 capacity — +42,197 tokens for the same host memory.
+of L2 capacity — +42,197 tokens for the same memory.
+
+**V1 intentionally targets Qwen3-8B at TP=1.** The record is a *fixed* 1024-byte
+payload plus 16 scale bytes, sized for 8 local KV heads. At TP=2 there are 4 local
+heads (512 + 8 bytes), so the padding, the alignment proof, the capacity maths and
+the JIT geometry all change with it. Any other local head count is rejected at
+construction with a message that names the restriction, rather than failing later
+as an opaque payload/geometry mismatch. TP-sharded record formats are future work.
 
 ## Accuracy
 

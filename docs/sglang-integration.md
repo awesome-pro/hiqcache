@@ -108,13 +108,13 @@ L2TransferEngine sets current stream = host_to_device_stream
        jit_transfer_hicache_one_layer(              # encoded bytes -> staging
          k_cache_src = k_data_refs[host_layer_id],  # host arena, uint8
          k_cache_dst = h2d_staging.k[layer_id],     # device, uint8
-         element_dim = 576)                         # 576 bf16 == 1152 bytes
+         element_dim = 1152)                        # one full uint8 record
        codec.decode_records(staging) -> bf16
        device_pool.k_buffer[layer_id][device_indices] = k_bf16
        ... same for V ...
 ```
 
-### Why `element_dim = 576`
+### Why `element_dim = 1152`, and why the dtype must match
 
 `run_one` uses a **single** `SymbolicDType` across all four cache tensors:
 
@@ -123,10 +123,25 @@ TensorMatcher({-1, D}).with_strides({N, 1}).with_dtype(cache_dtype)  // src
 TensorMatcher({-1, D}).with_strides({M, 1}).with_dtype(cache_dtype)  // dst
 ```
 
-so a uint8 source and a bf16 destination are rejected. Reinterpreting both uint8
-buffers as **576 BF16 elements** satisfies that check while leaving the byte
-width the kernel actually moves unchanged: `576 * 2 == 1152`. Verified to work
-on CPU, MPS and non-contiguous slices.
+So source and destination must have the *same* dtype. Both sides of the H2D move
+are already 1152-byte encoded byte buffers, so the correct call is a plain byte
+copy:
+
+```text
+dtype        uint8 <-> uint8
+element_dim  1152
+itemsize     1
+element_size 1152 B   == kElementSize, and % 128 == 0
+```
+
+An earlier revision viewed **only** the destination as `bfloat16` (576 elements)
+while leaving the source `uint8`. The byte width was right but the dtypes did not
+match, so the kernel would have rejected it. Either view both sides or neither;
+neither is simpler and needs no reinterpretation at all.
+
+`scripts/preflight.py` now asserts statically that no one-sided
+`.view(torch.bfloat16)` remains in the pool, so this class of bug fails on the
+Mac rather than on a rented GPU.
 
 ---
 
