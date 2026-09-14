@@ -32,7 +32,8 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from hiqcache.codec import (  # noqa: E402
     decode_records,
@@ -53,11 +54,21 @@ LAYER_NUM = 36
 # ---------------------------------------------------------------------------
 
 
-def make_vectors() -> dict[str, torch.Tensor]:
+def make_vectors(device: torch.device | str = "cpu") -> dict[str, torch.Tensor]:
     """The vector set every device must agree on.
 
-    All values are constructed on CPU from a fixed seed so the *input* is
-    identical everywhere; only the arithmetic device varies.
+    All values are built from an explicit **CPU** generator, because
+    ``torch.randn(generator=...)`` is not guaranteed to be bit-identical across
+    backends. Generating the inputs on the device under test would silently
+    compare the codec on two different problems -- which is exactly the failure
+    that produced "identical statistics, different digest" on the pod.
+
+    The generator is one shared stream consumed in a fixed order, so reordering
+    this function changes every downstream digest and requires regenerating the
+    reference manifest.
+
+    Prefer :func:`load_or_make_vectors`, which also persists the exact tensors so
+    both machines read identical bytes from disk.
     """
     g = torch.Generator(device="cpu").manual_seed(0xC0FFEE)
     vectors: dict[str, torch.Tensor] = {}
@@ -108,7 +119,40 @@ def make_vectors() -> dict[str, torch.Tensor]:
         ).to(torch.bfloat16)
     vectors["power_of_two_absmax"] = pow2
 
+    if str(device) != "cpu":
+        return {k: v.to(device) for k, v in vectors.items()}
     return vectors
+
+
+def load_or_make_vectors(
+    device: torch.device | str, path: Path
+) -> tuple[dict[str, torch.Tensor], bool]:
+    """Load the shared vector set, creating it if absent.
+
+    Returns ``(vectors, created)``. Persisting the tensors rather than trusting
+    the generator alone means both machines read the same bytes off disk, which
+    removes the entire class of "same statistics, different digest" confusion:
+    with a matching input digest, any output difference really is the codec.
+    """
+    if path.is_file():
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        vectors = dict(payload["vectors"])
+        if str(device) != "cpu":
+            vectors = {k: v.to(device) for k, v in vectors.items()}
+        return vectors, False
+
+    vectors = make_vectors()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "vectors": {k: v.cpu() for k, v in vectors.items()},
+            "torch": torch.__version__,
+        },
+        path,
+    )
+    if str(device) != "cpu":
+        vectors = {k: v.to(device) for k, v in vectors.items()}
+    return vectors, True
 
 
 # ---------------------------------------------------------------------------
@@ -136,19 +180,24 @@ def _digest(tensor: torch.Tensor) -> str:
     return h.hexdigest()[:32]
 
 
-def run(device: torch.device) -> dict:
+def run(device: torch.device, vectors_path: Path) -> dict:
     """Encode every vector on ``device`` and report digests plus error stats."""
-    vectors = make_vectors()
+    vectors, created = load_or_make_vectors(device, vectors_path)
+    if created:
+        print(f"created the shared vector set at {vectors_path}")
+        print("NOTE: commit it, so both machines encode identical inputs.\n")
+    else:
+        print(f"using the shared vector set at {vectors_path}\n")
     results: dict[str, dict] = {}
 
-    for name, x_cpu in sorted(vectors.items()):
-        x = x_cpu.to(device)
-        records = encode_records(x)
+    for name, x_dev in sorted(vectors.items()):
+        x_cpu = x_dev.to("cpu")
+        records = encode_records(x_dev)
         payload, scales = unpack_records(records, head_num=HEAD_NUM, head_dim=HEAD_DIM)
         restored = decode_records(records, head_num=HEAD_NUM, head_dim=HEAD_DIM)
 
         # Statistics need float64 reductions; do them on CPU but keep the
-        # accelerator's exact bytes in the digests above.
+        # accelerator's exact bytes in the digests below.
         stats = error_stats(x_cpu, restored.to("cpu"), scales.to("cpu"))
         bound = verified_error_bound(restored.to("cpu"), scales.to("cpu"))
         err = (restored.to("cpu").float() - x_cpu.float()).abs()
@@ -156,6 +205,12 @@ def run(device: torch.device) -> dict:
 
         results[name] = {
             "input_shape": list(x_cpu.shape),
+            # Digest of the INPUT as the accelerator sees it. When this matches
+            # across devices but an output digest does not, the difference is
+            # genuinely in the codec -- which is the question this whole harness
+            # exists to answer. Without it, a generator difference and a codec
+            # difference are indistinguishable.
+            "input_digest": _digest(x_cpu),
             "records_digest": _digest(records),
             "payload_digest": _digest(payload),
             "scales_digest": _digest(scales),
@@ -176,6 +231,7 @@ def run(device: torch.device) -> dict:
         "python": platform.python_version(),
         "torch": torch.__version__,
         "cwru": _cuda_runtime(),
+        "vectors_file": vectors_path.name,
         "layout": {
             "row_bytes": V1_LAYOUT.row_bytes,
             "payload_bytes": V1_LAYOUT.payload_bytes,
@@ -218,6 +274,22 @@ def compare(a: dict, b: dict) -> tuple[bool, list[str]]:
         )
         return False, problems
 
+    # Input digests are checked first and reported distinctly. If inputs differ,
+    # the two runs solved different problems and the output digests say nothing
+    # about the codec.
+    input_mismatches = [
+        name
+        for name in sorted(va)
+        if va[name].get("input_digest") != vb[name].get("input_digest")
+    ]
+    if input_mismatches:
+        problems.append(
+            "INPUT MISMATCH on "
+            + ", ".join(input_mismatches)
+            + " -- the two runs encoded different tensors, so output digests are "
+            "not comparable. Both sides must use the same --vectors file."
+        )
+
     digest_keys = (
         "records_digest",
         "payload_digest",
@@ -238,13 +310,13 @@ def compare(a: dict, b: dict) -> tuple[bool, list[str]]:
                 f"B={vb[name]['bound_violations']}"
             )
 
-    if mismatched == 0:
+    if mismatched == 0 and not input_mismatches:
         problems.insert(
             0,
             f"OK: all {len(va)} vectors bit-identical across "
             f"{a.get('device')} and {b.get('device')}",
         )
-    return mismatched == 0, problems
+    return mismatched == 0 and not input_mismatches, problems
 
 
 def _print_summary(manifest: dict) -> None:
@@ -281,6 +353,16 @@ def main() -> int:
     )
     gen.add_argument("--json", default=None, help="output path")
     gen.add_argument(
+        "--vectors",
+        type=Path,
+        default=None,
+        help=(
+            "shared vector set (.pt). Created if absent. Both machines MUST use "
+            "the same file, otherwise they encode different inputs and the "
+            "comparison is meaningless."
+        ),
+    )
+    gen.add_argument(
         "--expect",
         type=Path,
         default=None,
@@ -314,7 +396,8 @@ def main() -> int:
     else:
         device = torch.device(args.device)
 
-    manifest = run(device)
+    vectors_path = args.vectors or (REPO_ROOT / "results" / "conformance_vectors.pt")
+    manifest = run(device, vectors_path)
     _print_summary(manifest)
 
     out = args.json

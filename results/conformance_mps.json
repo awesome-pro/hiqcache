@@ -5,6 +5,7 @@
   "python": "3.12.12",
   "torch": "2.14.0",
   "cwru": null,
+  "vectors_file": "conformance_vectors.pt",
   "layout": {
     "row_bytes": 1152,
     "payload_bytes": 1024,
@@ -28,6 +29,7 @@
         8,
         128
       ],
+      "input_digest": "a04d22fefe393845831829795eec0ba3",
       "records_digest": "a8b93e156039f0a4768daae8bc5e0ef6",
       "payload_digest": "15e5639eb11175a20ed5af99039ec687",
       "scales_digest": "c7cce60eb2984beac9519539ae6ef1b1",
@@ -46,6 +48,7 @@
         8,
         128
       ],
+      "input_digest": "3a190ab72b6318b777966c631c486977",
       "records_digest": "f6367970a15973068041f2b0024dae51",
       "payload_digest": "332ac9168bb867670a4adb9c2f4f0531",
       "scales_digest": "964b5e42b0e0dce1d906cde3063bc0d7",
@@ -64,6 +67,7 @@
         8,
         128
       ],
+      "input_digest": "6f0b4958848e9bf04999e2bab4c74bb5",
       "records_digest": "e93a55cfa2b8b2be9a138017c442645a",
       "payload_digest": "18f5815d097d5803b4182554a1940db2",
       "scales_digest": "cc950ac790773c1773a08d04f7ffaf10",
@@ -82,6 +86,7 @@
         8,
         128
       ],
+      "input_digest": "de72b111d8b77f00d3bfa437fba558c0",
       "records_digest": "d10c2fb5593dae127341e90db25a3397",
       "payload_digest": "12dcf5dd91393c51e2b2fe9a1f5d8d8a",
       "scales_digest": "49bb07dda5344a6087f457f454b65ca9",
@@ -100,6 +105,7 @@
         8,
         128
       ],
+      "input_digest": "9d32de645300e4816bf8ce3a229ee48a",
       "records_digest": "6b4d91abf5f6ebfb60890320437c38c4",
       "payload_digest": "581e9efe901ea913e895e0cb00eb325d",
       "scales_digest": "19494e161adf23f143add2a95daee0f2",
@@ -118,6 +124,7 @@
         8,
         128
       ],
+      "input_digest": "ea7a44718b8df207b80c545f9cc1a5b1",
       "records_digest": "ec4240a739d2a189a546a5e5170942bb",
       "payload_digest": "8964fb40196a38f08e2d1f68c37d260c",
       "scales_digest": "9a56c7da6428bf3504f44b5f52b10ff2",
@@ -136,6 +143,7 @@
         8,
         128
       ],
+      "input_digest": "39dac59c8464256e9229b032cb4c519f",
       "records_digest": "0aca1f7a80d49598a39d96cba5e8cac3",
       "payload_digest": "1036a211ac71dd2e843d220617721a87",
       "scales_digest": "7cbfedd7ff1bfee4428e0132f80e8298",
@@ -154,6 +162,7 @@
         8,
         128
       ],
+      "input_digest": "14b3f69d371d6e286f5942ffb3585d08",
       "records_digest": "f7889cd010282124e504661595b5c6b2",
       "payload_digest": "cecbacee1e6ad3ea14535071c44c8ba4",
       "scales_digest": "5a0f20d03e3e66bfb41f04de4f652ccf",
@@ -172,6 +181,7 @@
         8,
         128
       ],
+      "input_digest": "af49dd08d6edecc41114c6d14ac8dcc3",
       "records_digest": "1fa5c90aa15f3a41c60c634b02caa194",
       "payload_digest": "0b59991bc02cf59c06aebd5a45ab2d89",
       "scales_digest": "6073860590430a9ae14dd3a7e6098dc9",
