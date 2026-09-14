@@ -91,7 +91,14 @@ git -C hiqcache rev-parse HEAD > provenance/hiqcache_sha.txt
 # extension? A missing ninja or CUDA header otherwise surfaces much later as a
 # generic "needs the JIT HiCache kernel" error that looks like a HiCache bug.
 say "GATE 0/4: environment probe (JIT compile capability)"
-if ! python scripts/env_probe.py --no-network; then
+# Resolve the probe by absolute path. This script clones into $WORKSPACE and
+# therefore cds there, so a relative "scripts/env_probe.py" would not resolve --
+# the probe lives in the hiqcache checkout, not in the workspace root.
+PROBE="$WORKSPACE/hiqcache/scripts/env_probe.py"
+if [ ! -f "$PROBE" ]; then
+  die "environment probe not found at $PROBE (is the hiqcache clone complete?)"
+fi
+if ! python "$PROBE" --no-network; then
   cat <<'NOTE' >&2
 
 GATE 0 failed. The probe output above names the blocking item(s).
