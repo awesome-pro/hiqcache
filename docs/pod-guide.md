@@ -51,11 +51,16 @@ runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404   <- preferred
 runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404
 ```
 
-Prefer **cu1290**: it needs a less recent driver than cu1300 and matches what
-SGLang can actually be built against. A CUDA 12.8 image will install a torch
-built for a different CUDA version, and no `pip install` fixes that — the CUDA
-runtime is bundled inside the torch wheel, so only the *driver* needs to be new
-enough; the *toolkit* (which compiles the JIT kernels) has to match.
+Prefer **cu1290**: `torch==2.13.0` is published for cu129 and cu130 only, and the
+cu129 image ships that exact torch already, so `pip install -e python` replaces
+nothing. It also needs a less recent driver than cu1300. CUDA 12.9 is not a
+downgrade — it is the other valid answer, and the conservative one.
+
+**A CUDA 12.8 image cannot work.** There is no torch 2.13.0 build for it, so pip
+substitutes a torch built for a different CUDA. The runtime is bundled *inside
+the torch wheel*, while the *toolkit* (`nvcc`) that compiles the JIT kernels
+comes from the image — both must agree. `pod_bootstrap.sh` prints this pair and
+warns if they diverge. Details: `docs/image-compatibility.md`.
 
 Everything else about the pod — A6000 48 GB, 62 GB RAM, 150 GB disk — is correct.
 

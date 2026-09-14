@@ -120,6 +120,40 @@ hiqcache/.venv/bin/pip install --quiet --upgrade pip
 hiqcache/.venv/bin/pip install --quiet torch pytest numpy
 hiqcache/.venv/bin/python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
+# ------------------------------------------------------- torch pin alignment
+# The whole reason an image has to be chosen carefully: SGLang pins a torch
+# version, and torch wheels only exist for certain CUDA versions. If the
+# container's torch already satisfies the pin, `pip install -e python` replaces
+# nothing and the image's nvcc (which compiles the JIT kernels) keeps matching
+# torch's bundled CUDA. If it does not, pip swaps torch and the two can diverge.
+say "torch pin alignment (SGLang requires a specific torch)"
+# Parsed with sed rather than `grep -oP`: the latter is a GNU extension that BSD
+# grep (macOS) rejects, and this script should stay runnable anywhere.
+PINNED_TORCH="$(sed -n 's/^[[:space:]]*"torch==\([0-9][^"]*\)".*/\1/p' \
+  sglang/python/pyproject.toml | head -1)"
+INSTALLED_TORCH="$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo none)"
+INSTALLED_CUDA="$(python -c 'import torch; print(torch.version.cuda or "cpu")' 2>/dev/null || echo none)"
+NVCC_RELEASE="$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)"
+NVCC_RELEASE="${NVCC_RELEASE:-none}"
+printf '  SGLang pins torch : %s\n  container has     : %s (cuda %s)\n  nvcc release      : %s\n' \
+  "${PINNED_TORCH:-unknown}" "$INSTALLED_TORCH" "$INSTALLED_CUDA" "$NVCC_RELEASE"
+if [ -z "$PINNED_TORCH" ]; then
+  echo "  -> could not parse the torch pin; skipping the alignment check."
+elif [ "${INSTALLED_TORCH#"$PINNED_TORCH"}" != "$INSTALLED_TORCH" ]; then
+  echo "  -> container torch already satisfies the pin; pip will not replace it."
+  echo "     nvcc $NVCC_RELEASE and torch cuda $INSTALLED_CUDA are the operative pair."
+else
+  cat <<EOF
+  -> WARNING: container torch does not satisfy the pin.
+     'pip install -e python' will replace it, and torch's bundled CUDA runtime
+     may then differ from this image's nvcc ($NVCC_RELEASE). Pure-torch work
+     (codec, conformance) is unaffected; the JIT-compiled HiCache kernels may
+     fail to build. See docs/image-compatibility.md.
+     An image whose torch already matches avoids this, e.g.
+     runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404
+EOF
+fi
+
 # ------------------------------------------------------------------- gates
 say "GATE 1/4: local test suite must be green"
 (cd hiqcache && HIQCACHE_SGLANG_ROOT="../sglang" .venv/bin/python -m pytest tests/ -q)

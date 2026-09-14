@@ -67,9 +67,45 @@ runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404
 | `1.4.0-rc.164-cu1290-torch2130-ubuntu2404` | 12.9 | 2.13.0 |
 | `1.4.0-rc.164-cu1300-torch2130-ubuntu2404` | 13.0 | 2.13.0 |
 
-Prefer **cu1290** over cu1300 unless something needs CUDA 13: it needs a less
-recent driver, and SGLang's own Dockerfile only validates 13.0.3 for its official
-build, so 12.9 is the conservative choice against a source install.
+`torch==2.13.0` is published for **cu129 and cu130 only** — there is no cu128 and
+no cu131 build. Both images above are therefore valid; the pin is what matters.
+
+### Why cu1290 and not cu1300
+
+CUDA 12.9 is not a downgrade — it is the *other* valid answer, and it is the
+conservative one:
+
+- **It satisfies the pin exactly.** The image's preinstalled torch is already
+  `2.13.0+cu129`, so `pip install -e python` has nothing to replace. No swap, no
+  risk of the bundled runtime diverging from the image's `nvcc`.
+- **It needs a less recent driver.** CUDA 12.9 runs on older drivers than 13.0,
+  which matters on rented hardware where the driver is not yours to change.
+- **The feature difference is irrelevant here.** Nothing HiQCache touches —
+  `cudaHostRegister`, `cudaMemcpy`, element-wise kernels — differs between 12.9
+  and 13.0. SGLang's JIT kernels compile from the same source either way.
+
+What actually matters is that **two pairs stay consistent**, and neither is the
+container's headline CUDA version:
+
+| Pair | Why |
+| --- | --- |
+| `torch.version.cuda` ↔ image `nvcc` | `nvcc` compiles the JIT kernels against torch's headers |
+| torch's bundled runtime ↔ **driver** | the driver must be new enough for the runtime torch ships |
+
+`pod_bootstrap.sh` now prints and checks the first pair explicitly, so a silent
+torch replacement during the SGLang install cannot go unnoticed.
+
+### What a healthy pod looks like
+
+```text
+SGLang pins torch : 2.13.0
+container has     : 2.13.0+cu129 (cuda 12.9)
+nvcc release      : 12.9
+  -> container torch already satisfies the pin; pip will not replace it.
+```
+
+`scripts/env_probe.py` reports the same pair as
+`[PASS] torch CUDA version matches the image toolkit`.
 
 Everything else about the pod — A6000 48 GB, 62 GB RAM, 150 GB disk — was
 correct and does not need to change.
