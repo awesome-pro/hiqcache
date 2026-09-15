@@ -90,10 +90,13 @@ isolated codec venv, and runs **four gates**:
 `pip install ninja` and re-run — see Appendix A. Do not replace the pod for it.
 
 **Gate 3 is the important one.** The Mac already proved CPU ≡ MPS over 9 vectors.
-It encodes a **shared, committed vector set** (`results/conformance_vectors.pt`)
-rather than regenerating inputs, so both machines solve exactly the same problem.
-Each manifest records an `input_digest` per vector; if those differ the comparison
-says `INPUT MISMATCH` instead of blaming the codec.
+Its vectors are derived from **integer arithmetic, with no RNG**, so the same code
+produces the same bytes under any torch version and on any device. A shared copy
+lives at `results/conformance_vectors.pt` and is verified against a fresh
+generation on load, so a stale file cannot silently pin both sides to old inputs.
+
+Each manifest records an `input_digest` per vector: if those differ, the
+comparison reports `INPUT MISMATCH` rather than blaming the codec.
 If CUDA disagrees, stop — the bug is in the codec or a backend op, not in
 HiCache, and it is far cheaper to fix here.
 

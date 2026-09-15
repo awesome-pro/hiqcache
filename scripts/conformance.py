@@ -54,46 +54,95 @@ LAYER_NUM = 36
 # ---------------------------------------------------------------------------
 
 
+def _pseudo_uniform(shape, *, seed: int) -> torch.Tensor:
+    """Deterministic, bit-exact ``[0, 1)`` values with no RNG and no transcendentals.
+
+    Built from integer arithmetic and exact float32 division by ``2**24``, so the
+    result is identical on every torch version, every CPU and every accelerator.
+    That property is the entire point: the harness compares codec output across
+    machines, so the *inputs* must be reproducible even when everything else is
+    not.
+
+    An earlier revision used ``torch.randn(generator=...)`` and two failed
+    attempts followed from it:
+
+    1. generating on the device under test meant the pod encoded a different
+       tensor from the Mac's reference;
+    2. even pinning generation to CPU was not enough -- a fresh generation on the
+       pod differed from the committed reference despite both reporting torch
+       2.14.0, so the stream is not stable across builds.
+
+    Deriving values from a counter removes the dependency completely.
+    """
+    n = 1
+    for dim in shape:
+        n *= dim
+    idx = torch.arange(n, dtype=torch.int64)
+    # splitmix64: integer-only, well-defined in int64.
+    # The seed is reduced to 32 bits: it is only a stream selector, and a
+    # larger value would overflow int64 in the addition below.
+    z = (idx + (seed & 0xFFFFFFFF)) & 0xFFFFFFFFFFFFFFFF
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & 0xFFFFFFFFFFFFFFFF
+    z = z ^ (z >> 31)
+    # 24 bits keeps every value exact in float32, so the cast below is exact too.
+    vals = ((z >> 40) & 0xFFFFFF).to(torch.float32).div_(float(1 << 24))
+    # Map to [-1, 1): exact float32 arithmetic, still no transcendentals.
+    vals = (vals - 0.5) * 2.0
+    return vals.reshape(shape)
+
+
+def _pseudo_normal(shape, *, seed: int) -> torch.Tensor:
+    """Deterministic normal-ish values: sum of 12 uniforms, centred and scaled.
+
+    A sum of uniforms is bounded and has no tails, which is fine here -- these
+    vectors exercise the quantiser's *range handling*, not its tail behaviour.
+    Every step is exact float32, so the result is reproducible everywhere.
+    """
+    acc = None
+    for k in range(12):
+        # Seeds stay well inside 32 bits so the int64 addition cannot overflow.
+        part = _pseudo_uniform(shape, seed=seed * 1_000_003 + k * 7919)
+        acc = part if acc is None else acc + part
+    return acc - 6.0
+
+
 def make_vectors(device: torch.device | str = "cpu") -> dict[str, torch.Tensor]:
     """The vector set every device must agree on.
 
-    All values are built from an explicit **CPU** generator, because
-    ``torch.randn(generator=...)`` is not guaranteed to be bit-identical across
-    backends. Generating the inputs on the device under test would silently
-    compare the codec on two different problems -- which is exactly the failure
-    that produced "identical statistics, different digest" on the pod.
+    Reproducible by construction: integer bit manipulation plus exact float32
+    arithmetic, with no RNG and no transcendentals. The same code therefore
+    produces the same bytes under any torch version and on any device.
 
-    The generator is one shared stream consumed in a fixed order, so reordering
-    this function changes every downstream digest and requires regenerating the
-    reference manifest.
-
-    Prefer :func:`load_or_make_vectors`, which also persists the exact tensors so
-    both machines read identical bytes from disk.
+    Do not reintroduce ``torch.randn`` here. It is not reproducible across torch
+    builds, and a harness whose inputs vary cannot distinguish a codec difference
+    from an input difference -- which is precisely the question it exists to
+    answer.
     """
-    g = torch.Generator(device="cpu").manual_seed(0xC0FFEE)
     vectors: dict[str, torch.Tensor] = {}
 
-    vectors["random_unit"] = torch.randn((128, HEAD_NUM, HEAD_DIM), generator=g).to(
+    vectors["random_unit"] = _pseudo_normal((128, HEAD_NUM, HEAD_DIM), seed=1).to(
         torch.bfloat16
     )
     vectors["random_small"] = (
-        torch.randn((64, HEAD_NUM, HEAD_DIM), generator=g) * 1e-3
+        _pseudo_normal((64, HEAD_NUM, HEAD_DIM), seed=2) * 1e-3
     ).to(torch.bfloat16)
     vectors["random_large"] = (
-        torch.randn((64, HEAD_NUM, HEAD_DIM), generator=g) * 1e3
+        _pseudo_normal((64, HEAD_NUM, HEAD_DIM), seed=3) * 1e3
     ).to(torch.bfloat16)
     vectors["all_zeros"] = torch.zeros((32, HEAD_NUM, HEAD_DIM), dtype=torch.bfloat16)
     vectors["tiny_values"] = (
-        torch.randn((32, HEAD_NUM, HEAD_DIM), generator=g) * 1e-30
+        _pseudo_normal((32, HEAD_NUM, HEAD_DIM), seed=4) * 1e-30
     ).to(torch.bfloat16)
 
-    mixed = torch.randn((64, HEAD_NUM, HEAD_DIM), generator=g).to(torch.bfloat16)
+    mixed = _pseudo_normal((64, HEAD_NUM, HEAD_DIM), seed=5).to(torch.bfloat16)
     mixed[0, :, :] = 0.0
     mixed[1, 0, :] = 1e-30
     mixed[2, 1, :] = 1e4
     mixed[3] *= 1e-8
     vectors["mixed_magnitudes"] = mixed
 
+    # Exactly representable quotients: every value is k/127 for integer k.
     steps = torch.arange(-127, 128, dtype=torch.float32) / 127.0
     row = steps.repeat(HEAD_DIM // steps.numel() + 1)[:HEAD_DIM]
     vectors["exact_grid"] = (
@@ -103,19 +152,19 @@ def make_vectors(device: torch.device | str = "cpu") -> dict[str, torch.Tensor]:
     )
 
     # A Qwen3-8B-shaped batch: 512 tokens is a realistic HiCache transfer size.
-    vectors["qwen3_8b_shaped"] = torch.randn(
-        (512, HEAD_NUM, HEAD_DIM), generator=g
+    vectors["qwen3_8b_shaped"] = _pseudo_normal(
+        (512, HEAD_NUM, HEAD_DIM), seed=6
     ).to(torch.bfloat16)
 
-    # Powers of two as absmax: exercises every exponent without bf16 scale
-    # rounding, so any drift here is a real arithmetic difference.
+    # Powers of two as absmax, so the scale needs no bf16 rounding and any drift
+    # is a genuine arithmetic difference rather than scale quantisation.
     pow2 = torch.zeros((24, HEAD_NUM, HEAD_DIM), dtype=torch.bfloat16)
     for i in range(24):
         mag = 2.0 ** (i - 12)
         pow2[i, :, 0] = mag
         pow2[i, :, 1] = -mag
         pow2[i, :, 2:] = (
-            torch.randn((HEAD_NUM, HEAD_DIM - 2), generator=g) * mag
+            _pseudo_normal((HEAD_NUM, HEAD_DIM - 2), seed=100 + i) * mag
         ).to(torch.bfloat16)
     vectors["power_of_two_absmax"] = pow2
 
@@ -124,35 +173,57 @@ def make_vectors(device: torch.device | str = "cpu") -> dict[str, torch.Tensor]:
     return vectors
 
 
+def _vectors_fingerprint(vectors: dict[str, torch.Tensor]) -> str:
+    """Order-independent digest of every vector's value bits."""
+    parts = [f"{name}:{_digest(vectors[name])}" for name in sorted(vectors)]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
+
 def load_or_make_vectors(
     device: torch.device | str, path: Path
 ) -> tuple[dict[str, torch.Tensor], bool]:
-    """Load the shared vector set, creating it if absent.
+    """Load the shared vector set, creating or repairing it as needed.
 
-    Returns ``(vectors, created)``. Persisting the tensors rather than trusting
-    the generator alone means both machines read the same bytes off disk, which
-    removes the entire class of "same statistics, different digest" confusion:
-    with a matching input digest, any output difference really is the codec.
+    Generation is deterministic, so the file is a cross-machine guarantee rather
+    than a necessity. That makes a *stale* file the real hazard: it would pin both
+    sides to an outdated vector set while the code produces different values. The
+    loader therefore verifies the file against a fresh generation and rewrites it
+    on mismatch, so the two cannot diverge unnoticed.
+
+    Returns ``(vectors, regenerated)``.
     """
-    if path.is_file():
-        payload = torch.load(path, map_location="cpu", weights_only=False)
-        vectors = dict(payload["vectors"])
-        if str(device) != "cpu":
-            vectors = {k: v.to(device) for k, v in vectors.items()}
-        return vectors, False
+    fresh = make_vectors()
+    expected = _vectors_fingerprint(fresh)
 
-    vectors = make_vectors()
+    if path.is_file():
+        stored = None
+        try:
+            payload = torch.load(path, map_location="cpu", weights_only=False)
+            stored = dict(payload["vectors"])
+        except Exception as exc:  # noqa: BLE001 - an unreadable file is just stale
+            print(f"WARNING: could not read {path.name} ({exc}); regenerating")
+        if stored is not None and _vectors_fingerprint(stored) == expected:
+            if str(device) != "cpu":
+                stored = {k: v.to(device) for k, v in stored.items()}
+            return stored, False
+        print(
+            f"WARNING: {path.name} does not match this build's vector set; "
+            f"regenerating. Any previously recorded manifest digests are stale "
+            f"and must be regenerated too."
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "vectors": {k: v.cpu() for k, v in vectors.items()},
+            "vectors": {k: v.cpu() for k, v in fresh.items()},
             "torch": torch.__version__,
+            "fingerprint": expected,
         },
         path,
     )
     if str(device) != "cpu":
-        vectors = {k: v.to(device) for k, v in vectors.items()}
-    return vectors, True
+        fresh = {k: v.to(device) for k, v in fresh.items()}
+    return fresh, True
 
 
 # ---------------------------------------------------------------------------

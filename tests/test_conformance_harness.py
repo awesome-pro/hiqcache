@@ -88,6 +88,77 @@ def test_committed_vector_file_is_stable():
         )
 
 
+def test_vectors_are_reproducible_across_processes():
+    """A fresh interpreter must derive identical digests.
+
+    This is the property that broke on the pod: the *same* torch version in a
+    different environment produced different ``torch.randn(generator=...)``
+    values, so the committed reference and a fresh generation disagreed. Vectors
+    are now derived from integer arithmetic, so a separate process must agree
+    exactly. Run in subprocesses because an in-process comparison can share
+    cached state that masks the problem.
+    """
+    import subprocess
+
+    script = (
+        "import sys; sys.path.insert(0, 'scripts'); sys.path.insert(0, 'src');"
+        "from conformance import make_vectors, _digest;"
+        "v = make_vectors();"
+        "print('\\n'.join(f'{k} {_digest(v[k])}' for k in sorted(v)))"
+    )
+    repo = Path(__file__).resolve().parents[1]
+    outputs = []
+    for _ in range(2):
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo, capture_output=True, text=True, check=True,
+        )
+        outputs.append(proc.stdout.strip())
+    assert outputs[0] == outputs[1], (
+        "vector generation is not reproducible across processes; do not use a "
+        "generator-based RNG here"
+    )
+    assert outputs[0], "subprocess produced no digests"
+
+
+def test_no_generator_based_rng_in_the_harness():
+    """Guard the root cause directly: no torch.randn/rand/randint in generation.
+
+    Generator-based torch RNG is not guaranteed reproducible across torch builds,
+    and a harness whose inputs vary cannot distinguish a codec difference from an
+    input difference -- the one question it exists to answer.
+
+    Inspects the AST rather than the text: the docstrings deliberately *name* the
+    banned calls to explain why they are banned, and a text scan would flag its
+    own explanation.
+    """
+    import ast
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "conformance.py"
+    tree = ast.parse(path.read_text())
+    generation = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in ("_pseudo_uniform", "_pseudo_normal", "make_vectors")
+    ]
+    assert generation, "generation functions not found; did they get renamed?"
+
+    banned = {"randn", "rand", "randint", "rand_like", "randn_like", "normal_"}
+    offenders = []
+    for node in generation:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Call):
+                func = sub.func
+                name = getattr(func, "attr", None) or getattr(func, "id", None)
+                if name in banned:
+                    offenders.append(f"{node.name}: {name}()")
+    assert not offenders, (
+        f"generator-based RNG in vector generation: {offenders}. It is not "
+        f"reproducible across torch builds; derive values arithmetically instead."
+    )
+
+
 def test_input_digest_distinguishes_input_from_codec_mismatch():
     """A perturbed input must be reported as an input mismatch, not a codec bug."""
     vectors = make_vectors()
