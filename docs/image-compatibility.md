@@ -70,7 +70,36 @@ runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404
 `torch==2.13.0` is published for **cu129 and cu130 only** — there is no cu128 and
 no cu131 build. Both images above are therefore valid; the pin is what matters.
 
-### Why cu1290 and not cu1300
+### Use cu1300, not cu1290
+
+**Correction.** An earlier revision of this file recommended cu1290. That was
+wrong, and the reason is a second constraint that the torch pin alone does not
+reveal: **SGLang's base dependencies hard-require CUDA 13.**
+
+```toml
+"cuda-python>=13.0",
+"flashinfer_python[cu13]==0.6.18",
+"humming-kernels[cu13]==0.1.12",
+"nvidia-cutlass-dsl[cu13]==4.6.2",
+"nvshmem4py-cu13",
+```
+
+and `docker/Dockerfile` supports **only** `CUDA_VERSION=13.0.3`, mapping it to
+`CUINDEX=130`. So the intended environment is CUDA 13, and a CUDA 12.9 pod cannot
+resolve the dependency set: `pip install -e python` will fail on the `[cu13]`
+extras or pull CUDA 13 packages onto a 12.9 toolchain.
+
+The torch pin is satisfied by both images, so it is *not* sufficient to
+discriminate. Two constraints, and the stricter one wins:
+
+| Constraint | cu1290 | cu1300 |
+| --- | --- | --- |
+| `torch==2.13.0` exists | yes | yes |
+| SGLang's `[cu13]` deps resolvable | **no** | **yes** |
+
+Use `runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404`.
+
+### The earlier (incorrect) reasoning, for the record
 
 CUDA 12.9 is not a downgrade — it is the *other* valid answer, and it is the
 conservative one:

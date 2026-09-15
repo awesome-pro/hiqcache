@@ -157,8 +157,40 @@ else
      (codec, conformance) is unaffected; the JIT-compiled HiCache kernels may
      fail to build. See docs/image-compatibility.md.
      An image whose torch already matches avoids this, e.g.
-     runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404
+     runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404
 EOF
+fi
+
+# ------------------------------------------ SGLang dependency resolution
+say "SGLang dependency resolution (does this image support SGLang's CUDA?)"
+# SGLang's base dependencies pin CUDA 13 packages (cuda-python>=13.0,
+# flashinfer_python[cu13], humming-kernels[cu13], nvidia-cutlass-dsl[cu13],
+# nvshmem4py-cu13) and docker/Dockerfile supports only CUDA_VERSION=13.0.3. An
+# image with an older toolkit cannot resolve them, and the failure normally
+# appears deep inside an install. Resolve without downloading so it surfaces here.
+CUINDEX="$(printf '%s' "$NVCC_RELEASE" | tr -d '.')"
+if [ -n "$CUINDEX" ] && [ "$CUINDEX" != "none" ]; then
+  echo "  probing with --extra-index-url https://download.pytorch.org/whl/cu${CUINDEX}"
+  echo "  (--dry-run resolves only; nothing is downloaded)"
+  if python -m pip install --dry-run --quiet \
+      --extra-index-url "https://download.pytorch.org/whl/cu${CUINDEX}" \
+      -e sglang/python >/tmp/sglang_resolve.log 2>&1; then
+    echo "  -> dependency set resolves on this image."
+  else
+    echo "  -> WARNING: could not resolve SGLang's dependencies on this image."
+    grep -iE "conflict|no matching distribution|cannot install|requires" \
+      /tmp/sglang_resolve.log | head -8 | sed 's/^/     /'
+    cat <<EOF
+
+     SGLang at the pinned commit needs CUDA 13 (docs/image-compatibility.md).
+     On a CUDA 12.x image, switch to:
+       runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404
+     The codec gates below stay valid on any image -- they are pure torch and
+     never touch the compiled kernels -- but the pool tests cannot pass here.
+EOF
+  fi
+else
+  echo "  -> skipped: could not determine the CUDA toolkit version."
 fi
 
 # ------------------------------------------------------------------- gates

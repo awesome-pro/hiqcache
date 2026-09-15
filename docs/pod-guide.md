@@ -7,7 +7,7 @@ Target: **1× A6000 48 GB**, 64+ GB RAM, 150+ GB disk.
 
 **The image matters more than the hardware.** SGLang pins `torch==2.13.0`, which
 has no CUDA 12.8 build, so a mismatched image wastes a run. Use
-`runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404` — see step 1 and
+`runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404` — see step 1 and
 `docs/image-compatibility.md`.
 
 **Budget roughly 3–5 hours of GPU time** for steps 1–7, plus however long the
@@ -47,14 +47,15 @@ and PyTorch publishes **no CUDA 12.8 build of it** — the cu128 line stops at
 Use one of these (torch 2.13.0, exact match for the pin):
 
 ```text
-runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404   <- preferred
-runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404
+runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404   <- use this
+runpod/pytorch:1.3.3-rc.169-cu1290-torch2130-ubuntu2404
 ```
 
-Prefer **cu1290**: `torch==2.13.0` is published for cu129 and cu130 only, and the
-cu129 image ships that exact torch already, so `pip install -e python` replaces
-nothing. It also needs a less recent driver than cu1300. CUDA 12.9 is not a
-downgrade — it is the other valid answer, and the conservative one.
+Use **cu1300**. The torch pin is satisfied by both cu129 and cu130 images, but
+SGLang's base dependencies also hard-require CUDA 13 (`cuda-python>=13.0`,
+`flashinfer_python[cu13]`, `humming-kernels[cu13]`, `nvidia-cutlass-dsl[cu13]`,
+`nvshmem4py-cu13`), and its Dockerfile supports only CUDA 13.0.3. A cu129 pod
+cannot resolve that set. Two constraints, and the stricter one wins.
 
 **A CUDA 12.8 image cannot work.** There is no torch 2.13.0 build for it, so pip
 substitutes a torch built for a different CUDA. The runtime is bundled *inside
@@ -110,10 +111,39 @@ float64 differential test), then bf16 division. Do not proceed to step 4.
 
 This is the heaviest step and the one most likely to need iteration.
 
+**Two things the bare `pip install -e python` gets wrong**, both verified:
+
+1. SGLang pins `torchaudio==2.11.0` alongside `torch==2.13.0`. No torchaudio 2.13
+   build exists, so the pair only resolves through PyTorch's own wheel index —
+   which is exactly what SGLang's Dockerfile passes (`--extra-index-url
+   https://download.pytorch.org/whl/cu${CUINDEX}`).
+2. The base dependencies hard-require **CUDA 13** (`cuda-python>=13.0`,
+   `flashinfer_python[cu13]`, `humming-kernels[cu13]`,
+   `nvidia-cutlass-dsl[cu13]`, `nvshmem4py-cu13`). `pod_bootstrap.sh` now
+   `--dry-run` resolves this and warns if the image cannot satisfy it.
+
+So install with the extra index, and **dry-run first** to confirm torch is not
+replaced:
+
 ```bash
 cd /workspace/sglang
-pip install -e "python"          # or the CUDA-version-specific command from
-                                 # SGLang's own README
+CU=cu1300                     # match the image: cu1300 or cu1290
+CUINDEX="${CU#cu}"            # -> 1300 (unused below; kept for clarity)
+
+# 1. Resolve only. Confirm it plans to keep torch 2.13.0+cu130.
+python -m pip install --dry-run \
+    --extra-index-url https://download.pytorch.org/whl/${CU} \
+    -e python | tail -20
+
+# 2. Install. Omit the [all] extra: it pulls the diffusion stack (opencv,
+#    diffusers, moviepy) which none of these tests need.
+python -m pip install \
+    --extra-index-url https://download.pytorch.org/whl/${CU} \
+    -e python
+
+# 3. Confirm torch survived, and nvcc still matches it.
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+nvcc --version | tail -2
 ```
 
 Verify the import and that the new flag exists:
