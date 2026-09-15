@@ -30,6 +30,18 @@ BASE_COMMIT="515f5be77e74761c269e007ac41a5895191a1b7d"
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+EXPECTED_IMAGE="${EXPECTED_IMAGE:-runpod/pytorch:1.4.0-rc.164-cu1300-torch2130-ubuntu2404}"
+
+say "Expected image"
+cat <<EOF
+  This runbook targets: ${EXPECTED_IMAGE}
+  Requirements it satisfies, all verified against the registry and PyPI:
+    - CUDA 13.0 toolkit (nvcc present) -- SGLang's base deps need CUDA 13
+    - torch 2.13.0+cu130 preinstalled -- matches SGLang's pin exactly
+    - Ubuntu 24.04, python 3.12, amd64
+  To override for a different image: EXPECTED_IMAGE=... bash $0
+EOF
+
 say "GPU and driver"
 command -v nvidia-smi >/dev/null || die "nvidia-smi not found: this is not a GPU pod"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv

@@ -33,6 +33,42 @@ resolves it.
 
 ---
 
+## Verified image facts
+
+Checked against the Docker registry and PyPI, not inferred from the tag name.
+
+`runpod/pytorch:1.4.0-rc.164-cu1300-torch2130-ubuntu2404` (config blob):
+
+| Property | Value |
+| --- | --- |
+| architecture | `amd64` / `linux` |
+| `CUDA_VERSION` | `13.0.0` |
+| `NV_CUDA_CUDART_DEV_VERSION` | `13.0.48-1` (so `nvcc` is present) |
+| cudnn | `9.12.0.46-1` (`libcudnn9-cuda-13`) |
+| NCCL | `2.27.7-1+cuda13.0` |
+| base OS | Ubuntu 24.04 |
+| `PATH` | includes `/usr/local/cuda/bin` |
+
+`1.3.3-rc.169-cu1300-torch2130-ubuntu2404` resolves to the same family. Either is
+fine; that is the only difference between them.
+
+Every dependency SGLang pins is published for cp312 / linux x86_64:
+
+| Package | Pinned | Available |
+| --- | --- | --- |
+| `torch` | `==2.13.0` | `2.13.0+cu130` wheel exists |
+| `torchaudio` | `==2.11.0` | exists (no 2.13 build exists at all) |
+| `flashinfer_python[cu13]` | `==0.6.18` | `py3-none-any` |
+| `humming-kernels[cu13]` | `==0.1.12` | `py3-none-manylinux_2_28_x86_64` |
+| `nvshmem4py-cu13` | (unpinned) | `0.4.0` cp312 manylinux x86_64 |
+| `cuda-tile` | `==1.6.0rc5` | sdist only (compiles locally) |
+| `cuda-python` | `>=13.0` | `13.4.1` |
+
+`--break-system-packages` is **not** needed: RunPod's images have no
+`EXTERNALLY-MANAGED` marker, so pip installs normally into the system Python.
+
+---
+
 ## Why "just upgrade CUDA on the pod" does not help
 
 Two separate things are usually conflated:
