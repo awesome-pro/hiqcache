@@ -131,13 +131,20 @@ CU=cu1300                     # match the image: cu1300 or cu1290
 CUINDEX="${CU#cu}"            # -> 1300 (unused below; kept for clarity)
 
 # 1. Resolve only. Confirm it plans to keep torch 2.13.0+cu130.
-python -m pip install --dry-run \
+SGLANG_BUILD_RUST_EXTS=none python -m pip install --dry-run \
     --extra-index-url https://download.pytorch.org/whl/${CU} \
     -e python | tail -20
 
-# 2. Install. Omit the [all] extra: it pulls the diffusion stack (opencv,
-#    diffusers, moviepy) which none of these tests need.
-python -m pip install \
+# 2. Install. Two flags matter:
+#    - SGLANG_BUILD_RUST_EXTS=none: the Rust radix-tree core is OPTIONAL
+#      (SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND defaults to "python"), and the
+#      grpc/multimodal/server extensions are only imported inside the feature
+#      that needs them. Nothing on the HiCache path requires them, and building
+#      them needs cargo, which the image does not ship -- setup.py fails at
+#      metadata time without it.
+#    - omit the [all] extra: it pulls the diffusion stack (opencv, diffusers,
+#      moviepy) which none of these tests need.
+SGLANG_BUILD_RUST_EXTS=none python -m pip install \
     --extra-index-url https://download.pytorch.org/whl/${CU} \
     -e python
 

@@ -180,26 +180,43 @@ say "SGLang dependency resolution (does this image support SGLang's CUDA?)"
 # nvshmem4py-cu13) and docker/Dockerfile supports only CUDA_VERSION=13.0.3. An
 # image with an older toolkit cannot resolve them, and the failure normally
 # appears deep inside an install. Resolve without downloading so it surfaces here.
+#
+# SGLANG_BUILD_RUST_EXTS=none is set deliberately. The Rust radix-tree core is
+# optional -- SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND defaults to "python" -- and
+# the grpc/multimodal/server extensions are only imported inside the feature that
+# needs them, so nothing on the HiCache path requires them. Building them needs
+# cargo, which this image does not ship, and setup.py fails at metadata time
+# without it.
 CUINDEX="$(printf '%s' "$NVCC_RELEASE" | tr -d '.')"
 if [ -n "$CUINDEX" ] && [ "$CUINDEX" != "none" ]; then
   echo "  probing with --extra-index-url https://download.pytorch.org/whl/cu${CUINDEX}"
   echo "  (--dry-run resolves only; nothing is downloaded)"
-  if python -m pip install --dry-run --quiet \
+  if SGLANG_BUILD_RUST_EXTS=none python -m pip install --dry-run --quiet \
       --extra-index-url "https://download.pytorch.org/whl/cu${CUINDEX}" \
       -e sglang/python >/tmp/sglang_resolve.log 2>&1; then
     echo "  -> dependency set resolves on this image."
-  else
-    echo "  -> WARNING: could not resolve SGLang's dependencies on this image."
-    grep -iE "conflict|no matching distribution|cannot install|requires" \
-      /tmp/sglang_resolve.log | head -8 | sed 's/^/     /'
+  elif grep -qiE "resolutionimpossible|conflicting dependencies|no matching distribution" \
+      /tmp/sglang_resolve.log; then
+    # A genuine resolution failure, i.e. the image cannot satisfy SGLang's pins.
+    echo "  -> FAIL: this image cannot resolve SGLang's dependencies."
+    grep -iE "resolutionimpossible|conflicting dependencies|no matching distribution|The conflict is caused by" \
+      /tmp/sglang_resolve.log | head -10 | sed 's/^/     /'
     cat <<EOF
 
      SGLang at the pinned commit needs CUDA 13 (docs/image-compatibility.md).
      On a CUDA 12.x image, switch to:
-       runpod/pytorch:1.3.3-rc.169-cu1300-torch2130-ubuntu2404
+       runpod/pytorch:1.4.0-rc.164-cu1300-torch2130-ubuntu2404
      The codec gates below stay valid on any image -- they are pure torch and
      never touch the compiled kernels -- but the pool tests cannot pass here.
 EOF
+  else
+    # Some other build-time failure (a missing tool, an import error). Say so
+    # rather than blaming the dependency set, which is what an earlier version of
+    # this probe did -- it reported a missing cargo as a CUDA mismatch.
+    echo "  -> could not complete the resolve, but this is NOT a dependency conflict."
+    grep -iE "RuntimeError|error:|is required" /tmp/sglang_resolve.log | head -5 | sed 's/^/     /'
+    echo "     See /tmp/sglang_resolve.log. If it names a missing build tool,"
+    echo "     install it and re-run rather than changing image."
   fi
 else
   echo "  -> skipped: could not determine the CUDA toolkit version."
