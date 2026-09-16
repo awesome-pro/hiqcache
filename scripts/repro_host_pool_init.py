@@ -133,13 +133,45 @@ def main() -> int:
     else:
         print("  three sequential build/destroy cycles succeeded")
 
-    banner("step 5: registered ranges still live after destroy (cascade check)")
+    banner("step 5: does destroy() actually release the registration?")
+    # Note: destroy() was NOT called on host_pool before this point. An earlier
+    # version of this script implied otherwise in the label, which made the
+    # output read as a leak when it was really an untested path.
     if host_pool is None:
         print("  step 2 never built a pool, so there is nothing to inspect")
-    elif host_pool.kv_buffer is None:
-        print("  kv_buffer released by destroy(); its ranges should be unregistered")
     else:
-        registration_state("kv_buffer after destroy", host_pool.kv_buffer)
+        import gc
+
+        buf_before = host_pool.kv_buffer
+        registration_state("  before destroy", buf_before)
+        host_pool.destroy()
+        print(f"  after destroy: kv_buffer is "
+              f"{'None' if host_pool.kv_buffer is None else type(host_pool.kv_buffer).__name__}")
+        if buf_before is not None:
+            registration_state("  buffer object after destroy", buf_before)
+
+        # The contract that matters: allocate, release, allocate again at the
+        # same size. If the release is incomplete the second registration of a
+        # reused range fails with "already mapped".
+        gc.collect()
+        try:
+            again = MHATokenToKVPoolHostINT8(
+                device_pool,
+                host_to_device_ratio=2.0,
+                host_size=0,
+                page_size=PAGE_SIZE,
+                layout="layer_first",
+                pin_memory=True,
+                device="cpu",
+                allocator_type="default",
+            )
+            print("  re-allocated after destroy: OK")
+            registration_state("  new kv_buffer", again.kv_buffer)
+            again.destroy()
+        except Exception as exc:  # noqa: BLE001
+            print(f"  re-allocate after destroy FAILED: {type(exc).__name__}: "
+                  f"{str(exc).splitlines()[0]}")
+            traceback.print_exc()
 
     banner("verdict")
     print("Compare which of steps 2/3/4 failed. If only step 2 failed, the issue is")
