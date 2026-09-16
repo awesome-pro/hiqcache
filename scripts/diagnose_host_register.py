@@ -96,6 +96,51 @@ def main() -> int:
     for label, ok, detail in results:
         print(f"  [{'OK  ' if ok else 'FAIL'}] {label:<28} {detail}")
 
+    banner("the exact arena path the pool uses (mmap-backed, not torch.empty)")
+    # The pool's arena comes from alloc_mmap -> torch.frombuffer(mmap), not from
+    # torch.empty. That is the one difference between this diagnostic's first
+    # attempt and the real construction path, so exercise it explicitly.
+    try:
+        from sglang.srt.mem_cache.storage.mmap.mmap_allocator import alloc_mmap
+        from sglang.srt.mem_cache.pool_host.common import (
+            ALLOC_MEMORY_FUNCS,
+            _cuda_host_register,
+            _cuda_host_unregister,
+        )
+
+        dims = (2, 36, 64, 1152)  # same shape family as the pool's arena
+        arena = alloc_mmap(dims, torch.uint8)
+        print(f"alloc_mmap  : shape={tuple(arena.shape)} dtype={arena.dtype} "
+              f"ptr=0x{arena.data_ptr():x} contig={arena.is_contiguous()}")
+        print(f"element_size={arena.element_size()} numel={arena.numel()}")
+
+        def probe(label, fn_):
+            try:
+                fn_()
+                results.append((label, True, "OK"))
+                print(f"  [OK  ] {label}")
+            except Exception as exc:  # noqa: BLE001
+                first = str(exc).splitlines()[0][:160]
+                results.append((label, False, f"{type(exc).__name__}: {first}"))
+                print(f"  [FAIL] {label}\n         {type(exc).__name__}: {first}")
+
+        probe("_cuda_host_register(arena, None)",
+              lambda: _cuda_host_register(arena, None))
+        probe("_cuda_host_register(arena, layout_dim)",
+              lambda: _cuda_host_register(arena, 2 * 1152 * 36))
+        # Check the metadata the unregister path depends on.
+        attr = getattr(arena, "_sglang_cuda_host_registered_ranges", "MISSING")
+        print(f"  registration metadata: {attr if attr == 'MISSING' else len(attr)}")
+        probe("_cuda_host_unregister(arena)", lambda: _cuda_host_unregister(arena))
+        probe("re-register after unregister (same range must be reusable)",
+              lambda: _cuda_host_register(arena, None))
+        try:
+            _cuda_host_unregister(arena)
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"  could not exercise the mmap path: {type(exc).__name__}: {exc}")
+
     banner("verdict")
     working = [label for label, ok, _ in results if ok]
     if "ints (what SGLang does)" in working:
