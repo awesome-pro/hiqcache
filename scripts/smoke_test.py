@@ -102,6 +102,28 @@ def main() -> int:
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--host-size", type=float, default=2.0)
     parser.add_argument("--port", type=int, default=30000)
+    parser.add_argument(
+        "--max-total-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Cap the L1 (device) KV pool. Load-back only happens when a prefix "
+            "is in L2 but NOT in L1, so L1 must be small enough for the filler "
+            "traffic to evict the shared prefix. Without this the default L1 is "
+            "large enough to hold everything and the revisit hits L1, never L2."
+        ),
+    )
+    parser.add_argument(
+        "--max-total-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Cap the L1 (device) KV pool. Load-back only fires when a prefix is "
+            "in L2 but NOT in L1, so L1 has to be small enough that the filler "
+            "traffic evicts the shared prefix. Without this the default L1 holds "
+            "everything, the revisit hits L1, and nothing is restored from L2."
+        ),
+    )
     parser.add_argument("--prefix-repeats", type=int, default=400,
                         help="shared prefix length in repeated sentences")
     parser.add_argument("--startup-timeout", type=float, default=900.0)
@@ -112,9 +134,12 @@ def main() -> int:
     sglang_root = Path(args.sglang_root).expanduser().resolve()
     config = build_configs(args.model, args.host_size, 1, 1)[args.config]
     base_url = f"http://127.0.0.1:{args.port}"
+    extra = []
+    if args.max_total_tokens:
+        extra += ["--max-total-tokens", str(args.max_total_tokens)]
     server_cmd = [
         sys.executable, "-m", "sglang.launch_server",
-        *config.server_args, "--port", str(args.port),
+        *config.server_args, "--port", str(args.port), *extra,
     ]
 
     env = dict(os.environ)
@@ -145,6 +170,9 @@ def main() -> int:
             server_cmd, cwd=sglang_root, env=env, stdout=log,
             stderr=subprocess.STDOUT, start_new_session=True,
         )
+    # So wait_for_server() can report log growth while the first-run model
+    # download is in progress; without it the wait looks like a hang.
+    proc._hiqcache_log_path = log_path
 
     try:
         # --- 1. boots -------------------------------------------------
@@ -160,6 +188,19 @@ def main() -> int:
         # picked the BF16 pool, hicache_host_total_tokens will be ~1.78x smaller.
         before = scrape_metrics(base_url)
         total_tokens = before.get("sglang:hicache_host_total_tokens", 0.0)
+        l1_tokens = before.get("sglang:max_total_num_tokens", 0.0)
+        report["l1_token_capacity"] = l1_tokens
+        if l1_tokens:
+            print(
+                f"    L1 (device) capacity {l1_tokens:,.0f} tokens; "
+                f"L2 (host) capacity {total_tokens:,.0f} tokens"
+            )
+            if l1_tokens > total_tokens:
+                print(
+                    "    NOTE: L1 > L2, so filler traffic must exceed L1 before "
+                    "the shared prefix is evicted to L2. If the load-back step "
+                    "fails, pass --max-total-tokens to cap L1."
+                )
         step = Step("L2 host pool allocated with the expected token capacity")
         steps.append(step)
         if total_tokens <= 0:
@@ -262,6 +303,7 @@ def main() -> int:
                 "sglang:hicache_host_used_tokens",
                 "sglang:hicache_host_total_tokens",
                 "sglang:hicache_dropped_tokens_total",
+                "sglang:max_total_num_tokens",
             )
         }
     except Exception as exc:  # noqa: BLE001

@@ -346,6 +346,9 @@ def main() -> int:
             server_cmd, cwd=sglang_root, env=env, stdout=log,
             stderr=subprocess.STDOUT, start_new_session=True,
         )
+    # So wait_for_server() can report log growth while the first-run model
+    # download is in progress; without it the wait looks like a hang.
+    proc._hiqcache_log_path = server_log
     result: dict = {
         "config": config.name,
         "config_label": config.label,
