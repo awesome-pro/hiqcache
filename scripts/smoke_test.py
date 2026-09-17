@@ -15,10 +15,21 @@ be compared against the codec layout. The BF16 pool reports 147,456 B/token; the
 INT8 pool must report 82,944. Anything in between means the record is being
 padded or the wrong pool was selected.
 
+The expectation is derived from ``--config``: ``int8`` must report the encoded
+82,944 B/token in L2, ``bf16`` must report the 147,456 baseline. Run both, as the
+bf16 run is the control that proves the measurement is sensitive.
+
 Usage::
 
-    python scripts/smoke_test.py --config int8 --expect-encoded
-    python scripts/smoke_test.py --config bf16 --expect-baseline
+    # from the hiqcache checkout, using the python that has SGLang installed
+    python scripts/smoke_test.py --config int8 --host-size 2
+    python scripts/smoke_test.py --config bf16 --host-size 2
+
+Notes:
+  * First run downloads Qwen3-8B (~16 GB). Set HF_HUB_ENABLE_HF_TRANSFER=1 and a
+    persistent HF_HOME if you have a volume mounted.
+  * --sglang-root defaults to the sibling ``sglang/`` checkout; override it if
+    the fork lives elsewhere.
 """
 
 from __future__ import annotations
