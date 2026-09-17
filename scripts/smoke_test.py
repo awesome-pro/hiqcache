@@ -207,15 +207,26 @@ def main() -> int:
             per_token = backup_bytes / backup_tokens
             report["measured_backup_bytes_per_token"] = per_token
 
-            # --- 4. the decisive check: compressed bytes on the wire ----
-            step = Step("L2 stores the *compressed* representation")
+            # --- 4. the decisive check: what width does L2 actually hold? ----
+            # SGLang computes the measured bytes as
+            #     len(device_indices) * mem_pool_host.size_per_token
+            # so this ratio IS size_per_token: 82,944 for the INT8 pool,
+            # 147,456 for BF16. The BF16 control run matters because it proves
+            # the measurement tracks the pool class rather than reporting a
+            # constant that happens to match.
+            compressed = args.config == "int8"
+            step = Step(
+                "L2 holds the compressed representation (82,944 B/token)"
+                if compressed
+                else "L2 holds the baseline BF16 representation (147,456 B/token)"
+            )
             steps.append(step)
             err = abs(per_token - expected) / expected
             step.record(
                 err < 0.02,
                 f"measured {per_token:,.0f} B/token vs expected {expected:,} "
-                f"({err:.2%} off). BF16 would be {expected_baseline:,}; "
-                f"INT8 must be {expected_encoded:,}.",
+                f"({err:.2%} off). INT8 pool must report {expected_encoded:,}; "
+                f"BF16 pool must report {expected_baseline:,}.",
             )
 
         # --- 5. L2 -> L1 restore --------------------------------------
