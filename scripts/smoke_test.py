@@ -107,17 +107,6 @@ def main() -> int:
         type=int,
         default=None,
         help=(
-            "Cap the L1 (device) KV pool. Load-back only happens when a prefix "
-            "is in L2 but NOT in L1, so L1 must be small enough for the filler "
-            "traffic to evict the shared prefix. Without this the default L1 is "
-            "large enough to hold everything and the revisit hits L1, never L2."
-        ),
-    )
-    parser.add_argument(
-        "--max-total-tokens",
-        type=int,
-        default=None,
-        help=(
             "Cap the L1 (device) KV pool. Load-back only fires when a prefix is "
             "in L2 but NOT in L1, so L1 has to be small enough that the filler "
             "traffic evicts the shared prefix. Without this the default L1 holds "
