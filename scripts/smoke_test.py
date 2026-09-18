@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -118,6 +119,44 @@ def post_generate(
         ) from exc
 
 
+_PREFILL_RE = re.compile(
+    r"Prefill batch.*?#new-seq:\s*(?P<seqs>\d+).*?"
+    r"#new-token:\s*(?P<newtok>\d+).*?"
+    r"#cached-token:\s*(?P<cached>\d+)"
+)
+
+
+def prefill_history(log_path: Path) -> list[dict]:
+    """Per-request prefill stats scraped from the server log.
+
+    ``#cached-token`` is how many prefix tokens the request matched, and
+    ``#new-token`` is how many it had to prefill. Together they distinguish the
+    two failure modes for load-back:
+
+      * cached ~= whole prompt, backup/load counters flat -> the prefix never
+        left L1, so nothing was asked of L2;
+      * cached ~= 0, prompt long -> the prefix was gone from L1 AND was not
+        restored from L2.
+
+    Without this the two look identical from the metrics alone, which is exactly
+    the ambiguity that made the previous failure hard to read.
+    """
+    if not log_path.is_file():
+        return []
+    out = []
+    for line in log_path.read_text(errors="replace").splitlines():
+        m = _PREFILL_RE.search(line)
+        if m:
+            out.append(
+                {
+                    "seqs": int(m.group("seqs")),
+                    "new_tokens": int(m.group("newtok")),
+                    "cached_tokens": int(m.group("cached")),
+                }
+            )
+    return out
+
+
 def build_prompt(prefix: str, question: str) -> str:
     return f"{prefix}\n\n{question}\n\nAnswer:"
 
@@ -142,12 +181,15 @@ def main() -> int:
     parser.add_argument(
         "--filler-requests",
         type=int,
-        default=40,
+        default=80,
         help=(
             "How many small filler requests to send in step 3. Volume is what "
-            "overflows L1; keep each request well under the L1 cap or the server "
-            "rejects it with HTTP 400. 40 x ~1500 words comfortably exceeds the "
-            "16,384-token cap used in the runbook."
+            "overflows L1, and it has to comfortably EXCEED the cap rather than "
+            "merely approach it: SGLang's default radix eviction policy is LRU, "
+            "so the shared prefix is the most recently used node and survives as "
+            "long as the filler fits. Keep each request well under the L1 cap or "
+            "the server rejects it with HTTP 400. 80 x ~1500 words is roughly "
+            "100k+ tokens against a 16,384-token cap."
         ),
     )
     parser.add_argument("--prefix-repeats", type=int, default=400,
@@ -331,19 +373,57 @@ def main() -> int:
         second_text = (second.get("text") or "").strip()
         after = scrape_metrics(base_url)
         load_delta = after.get("sglang:load_back_tokens_total", 0.0) - load_before
-        step.record(
-            load_delta > 0,
-            f"loaded {load_delta:,.0f} tokens back from L2",
-        )
+        history = prefill_history(log_path)
+        last = history[-1] if history else None
+        report["final_request_prefill"] = last
+        report["prefill_history_tail"] = history[-3:]
+        if load_delta > 0:
+            detail = f"loaded {load_delta:,.0f} tokens back from L2"
+            if last:
+                detail += (
+                    f"; final request cached {last['cached_tokens']:,} tokens, "
+                    f"prefilled {last['new_tokens']:,}"
+                )
+            step.record(True, detail)
+        else:
+            # Distinguish the two causes rather than reporting a bare zero.
+            # Any prefix match at all means the request was served from L1; the
+            # only question is whether it was a near-total hit or a partial one.
+            # A strict threshold here misreads a partial match as "gone from L1".
+            if last and last["cached_tokens"] > 0:
+                why = (
+                    f"no L2 load-back was attempted: the final request matched "
+                    f"{last['cached_tokens']:,} tokens and prefilled only "
+                    f"{last['new_tokens']:,}, so the prefix was still in L1. The "
+                    f"filler did not evict it -- lower --max-total-tokens."
+                )
+            elif last and last["cached_tokens"] == 0 and last["new_tokens"] > 0:
+                why = (
+                    f"the prefix was gone from L1 (cached 0) AND was not restored "
+                    f"from L2: the request prefilled {last['new_tokens']:,} tokens. "
+                    f"This is a real load-back failure, not a test-setup problem."
+                )
+            else:
+                why = "loaded 0 tokens back from L2"
+            step.record(False, why)
         report["load_back_tokens_delta"] = load_delta
 
         # --- 6. generation is still coherent --------------------------
         step = Step("regenerated text matches the first run (deterministic decoding)")
         steps.append(step)
-        step.record(
-            text == second_text,
-            f"first={text[:60]!r} second={second_text[:60]!r}",
-        )
+        same = text == second_text
+        detail = f"first={text[:60]!r} second={second_text[:60]!r}"
+        if not same:
+            detail = (
+                f"len {len(text)} vs {len(second_text)}; "
+                + (
+                    f"first difference at {next(i for i, (a, b) in enumerate(zip(text, second_text)) if a != b)}; "
+                    if len(text) == len(second_text) and text != second_text
+                    else "lengths differ; "
+                )
+                + detail
+            )
+        step.record(same, detail)
         report["second_generation"] = {"text": second_text[:200]}
 
         report["metrics_after"] = {
