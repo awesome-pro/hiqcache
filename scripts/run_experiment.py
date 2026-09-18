@@ -71,7 +71,14 @@ def build_configs(model: str, host_size_gb: float, tp: int, page_size: int) -> d
         "--enable-hierarchical-cache",
         "--hicache-io-backend", "kernel",
         "--hicache-mem-layout", "layer_first",
-        "--hicache-write-policy", "write_through",
+        # write_back is REQUIRED for L2 to be useful. Under write_through (and
+        # write_through_selective) SGLang sets is_write_back=False, and
+        # evict_device_leaf then DELETES an unbacked device leaf from the tree
+        # instead of demoting it to a host-only node. L2 fills up with KV that
+        # no tree node references, so host_hit_length stays 0, load-back never
+        # fires, and every revisit re-prefills -- which is what the smoke test
+        # measured: 21.8 GB backed up, 0 tokens ever restored.
+        "--hicache-write-policy", "write_back",
         "--hicache-size", f"{host_size_gb:g}",
     ]
     return {

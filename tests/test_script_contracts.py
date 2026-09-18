@@ -146,3 +146,56 @@ def test_wait_for_server_reports_progress(name: str):
         f"{name} must record the server log path so the startup wait can report "
         f"progress instead of appearing to hang"
     )
+
+
+def test_hicache_configs_use_write_back():
+    """write_back is required for L2 to be reachable at all.
+
+    Under write_through / write_through_selective, SGLang sets
+    ``is_write_back = (hicache_write_policy == "write_back")`` to False, and
+    ``UnifiedTreeCore.evict_device_leaf`` then DELETES an unbacked device leaf
+    from the tree instead of demoting it to a host-only node. L2 fills with KV
+    that no tree node references, so host_hit_length stays 0, load-back never
+    fires, and every revisit re-prefills.
+
+    Measured on the pod: 21.8 GB backed up and 0 tokens ever restored, with the
+    smoke test reporting "the prefix was gone from L1 AND was not restored from
+    L2". Nothing errors, so this is a silent misconfiguration -- worth a test.
+    """
+    script = _script("run_experiment.py")
+    tree = ast.parse(script.read_text())
+    found = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.List):
+            continue
+        values = [e.value for e in node.elts if isinstance(e, ast.Constant)]
+        if "--hicache-write-policy" in values:
+            found = True
+            idx = values.index("--hicache-write-policy")
+            policy = values[idx + 1] if idx + 1 < len(values) else None
+            assert policy == "write_back", (
+                f"hicache write policy is {policy!r}; L2 entries written under "
+                f"write_through are unreachable because the tree node is deleted "
+                f"on eviction rather than demoted"
+            )
+    assert found, "no --hicache-write-policy found; did the config change shape?"
+
+
+def test_hicache_configs_pin_the_pool_our_analysis_assumes():
+    """The codec only supports layer_first + kernel + page_size 1 at TP=1.
+
+    pod_bootstrap and the pool both reject anything else at startup, but a wrong
+    flag here would surface as a failed server launch rather than a failed test.
+    """
+    tree = ast.parse(_script("run_experiment.py").read_text())
+    flags: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.List):
+            values = [e.value for e in node.elts if isinstance(e, ast.Constant)]
+            for i, value in enumerate(values):
+                if isinstance(value, str) and value.startswith("--") and i + 1 < len(values):
+                    nxt = values[i + 1]
+                    if isinstance(nxt, str) and not nxt.startswith("--"):
+                        flags[value] = nxt
+    assert flags.get("--hicache-mem-layout") == "layer_first"
+    assert flags.get("--hicache-io-backend") == "kernel"
