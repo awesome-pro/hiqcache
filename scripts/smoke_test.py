@@ -41,6 +41,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -73,8 +74,21 @@ class Step:
         return self.ok
 
 
-def post_generate(base_url: str, prompt: str, *, max_new_tokens: int = 16, timeout: float = 300):
-    """One deterministic generation; returns the response JSON."""
+def post_generate(
+    base_url: str,
+    prompt: str,
+    *,
+    max_new_tokens: int = 16,
+    timeout: float = 300,
+    label: str = "",
+):
+    """One deterministic generation; returns the response JSON.
+
+    On an HTTP error the server's response body is included in the raised
+    exception. SGLang explains rejected requests there -- for example an input
+    longer than the KV pool can budget -- and without it the caller only sees
+    "HTTP Error 400: Bad Request", which says nothing about which limit was hit.
+    """
     body = json.dumps(
         {
             "text": prompt,
@@ -88,8 +102,20 @@ def post_generate(base_url: str, prompt: str, *, max_new_tokens: int = 16, timeo
         f"{base_url}/generate", data=body,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode()[:600]
+        except Exception:  # noqa: BLE001
+            pass
+        prefix = f"{label}: " if label else ""
+        raise RuntimeError(
+            f"{prefix}HTTP {exc.code} from /generate "
+            f"(prompt {len(prompt)} chars). Server said: {detail or '(no body)'}"
+        ) from exc
 
 
 def build_prompt(prefix: str, question: str) -> str:
@@ -111,6 +137,17 @@ def main() -> int:
             "in L2 but NOT in L1, so L1 has to be small enough that the filler "
             "traffic evicts the shared prefix. Without this the default L1 holds "
             "everything, the revisit hits L1, and nothing is restored from L2."
+        ),
+    )
+    parser.add_argument(
+        "--filler-requests",
+        type=int,
+        default=40,
+        help=(
+            "How many small filler requests to send in step 3. Volume is what "
+            "overflows L1; keep each request well under the L1 cap or the server "
+            "rejects it with HTTP 400. 40 x ~1500 words comfortably exceeds the "
+            "16,384-token cap used in the runbook."
         ),
     )
     parser.add_argument("--prefix-repeats", type=int, default=400,
@@ -218,12 +255,39 @@ def main() -> int:
         report["first_generation"] = {"text": text[:200]}
 
         # --- 3. L1 -> L2 ----------------------------------------------
-        # Enough distinct traffic to evict the shared prefix out of L1 and into L2.
+        # Enough distinct traffic to evict the shared prefix out of L1 into L2.
+        #
+        # Each filler request must be small enough for the capped L1 to admit,
+        # and there must be enough of them in total to overflow it. Sizing these
+        # too large makes the server reject them with HTTP 400 (the L1 cap cannot
+        # budget a request nearly as big as itself), which is a test bug, not a
+        # HiCache one. Volume, not size, is what forces eviction.
         step = Step("a cache entry is evicted from L1 to L2 (backup executed)")
         steps.append(step)
-        filler = " ".join(str(i) for i in range(6000))
-        for i in range(6):
-            post_generate(base_url, f"Filler {i}: {filler}\n\nQ: count?\n\nAnswer:")
+        filler = " ".join(str(i) for i in range(1500))
+        filler_sent = 0
+        filler_errors = 0
+        for i in range(args.filler_requests):
+            prompt = f"Filler {i}: {filler}\n\nQ: count?\n\nAnswer:"
+            try:
+                post_generate(base_url, prompt, label=f"filler {i}")
+                filler_sent += 1
+            except Exception as exc:  # noqa: BLE001
+                filler_errors += 1
+                if filler_errors == 1:
+                    print(f"    filler request {i} failed: {type(exc).__name__}: {exc}")
+        print(
+            f"    sent {filler_sent}/{args.filler_requests} filler requests "
+            f"(~{filler_sent * 1500:,} words) to overflow L1"
+        )
+        if filler_errors:
+            print(
+                f"    WARNING: {filler_errors} filler request(s) were rejected; "
+                f"L1 may not have been overflowed. Reduce --filler-requests size "
+                f"or raise --max-total-tokens."
+            )
+        report["filler_requests_sent"] = filler_sent
+        report["filler_requests_failed"] = filler_errors
         mid = scrape_metrics(base_url)
         backup_tokens = mid.get("sglang:hicache_backup_tokens_total", 0.0)
         backup_bytes = mid.get("sglang:hicache_backup_bytes_total", 0.0)
@@ -313,12 +377,22 @@ def main() -> int:
 
     report["steps"] = [{"name": s.name, "ok": s.ok, "detail": s.detail} for s in steps]
     failed = [s.name for s in steps if s.ok is False]
-    report["verdict"] = "PASS" if steps and not failed else "FAIL"
+    # A step is only a pass if it actually recorded a result. Treating
+    # ok is None as "not a failure" made the verdict print PASS when an
+    # exception had aborted the run before four of the six checks executed --
+    # a harness that lies is worse than one that fails.
+    not_run = [s.name for s in steps if s.ok is None]
+    report["steps_not_run"] = not_run
+    report["verdict"] = "PASS" if steps and not failed and not not_run else "FAIL"
 
     print(f"\n=== verdict: {report['verdict']}")
     if failed:
         print("=== failed steps:")
         for name in failed:
+            print(f"  - {name}")
+    if not_run:
+        print("=== steps that never ran (aborted before recording a result):")
+        for name in not_run:
             print(f"  - {name}")
         print(f"\n=== server log tail ({log_path}):")
         print(report["server_log_tail"])
