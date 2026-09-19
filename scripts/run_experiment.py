@@ -14,11 +14,20 @@ Configurations (PROJECT.md Phase 12):
 
 Usage::
 
-    python scripts/run_experiment.py --config int8 --tag exp-b-8gb
-    python scripts/run_experiment.py --config bf16 --tag exp-b-8gb \\
-        --workload reusable-prefixes --num-groups 8 --gsp-question-len 2048
+    for cfg in int8 bf16 baseline; do
+      python scripts/run_experiment.py --config $cfg --tag exp-b-8gb \\
+          --workload reusable-prefixes
+    done
+
+    # Experiment A -- codec cost at equal logical capacity.
+    python scripts/run_experiment.py --config int8 --tag exp-a --workload small
 
 Results go to ``results/exp_<config>_<tag>.json``.
+
+Experiment B only says anything if the aggregate reusable prefixes land BETWEEN
+the two L2 capacities. Below the BF16 capacity both configs hold everything;
+above the INT8 capacity both evict. Either way the comparison is empty, so the
+budget is checked and reported before a server starts.
 """
 
 from __future__ import annotations
@@ -58,7 +67,13 @@ class Config:
     host_size_gb: float = 8.0
 
 
-def build_configs(model: str, host_size_gb: float, tp: int, page_size: int) -> dict:
+def build_configs(
+    model: str,
+    host_size_gb: float,
+    tp: int,
+    page_size: int,
+    max_total_tokens: int | None = None,
+) -> dict:
     """The three Phase 12 configurations, sharing every non-codec setting."""
     common = [
         "--model-path", model,
@@ -67,6 +82,13 @@ def build_configs(model: str, host_size_gb: float, tp: int, page_size: int) -> d
         "--trust-remote-code",
         "--enable-metrics",
     ]
+    # An L1 cap is REQUIRED for these experiments, not optional. The default
+    # device pool on a 48 GB card holds millions of tokens, so a workload that
+    # fits entirely in L1 never reaches L2 at all and the experiment measures
+    # nothing. The cap has to be small enough that the reusable working set
+    # overflows L1 into L2 -- that overflow is the thing being measured.
+    if max_total_tokens:
+        common += ["--max-total-tokens", str(max_total_tokens)]
     hicache_common = [
         "--enable-hierarchical-cache",
         "--hicache-io-backend", "kernel",
@@ -151,10 +173,13 @@ def build_workloads(args) -> dict:
             ),
             bench_args=[
                 "--dataset-name", "generated-shared-prefix",
+                # system-prompt-len is the REUSABLE PER-GROUP PREFIX: the whole
+                # point of this workload. num_groups of them at that length is
+                # the aggregate working set the budget check sizes.
                 "--gsp-num-groups", str(args.num_groups),
                 "--gsp-prompts-per-group", str(args.prompts_per_group),
-                "--gsp-system-prompt-len", str(args.gsp_question_len),
-                "--gsp-question-len", "64",
+                "--gsp-system-prompt-len", str(args.gsp_prefix_len),
+                "--gsp-question-len", str(args.gsp_question_len),
                 "--gsp-output-len", "32",
                 "--num-prompts", str(args.num_groups * args.prompts_per_group),
                 "--max-concurrency", str(args.max_concurrency),
@@ -178,6 +203,59 @@ def capacity_budget(host_size_gb: float, layer_num: int) -> dict:
         out[name] = {"size_per_token": per_token, "token_capacity": raw + 1}
     out["gain"] = out["int8"]["token_capacity"] / out["bf16"]["token_capacity"]
     return out
+
+
+def workload_budget(args, budget: dict) -> dict:
+    """Estimate the reusable working set and say whether it discriminates.
+
+    Experiment B only says anything if the aggregate reusable prefixes sit
+    BETWEEN the two L2 capacities:
+
+        below bf16 capacity  -> both configs hold it, no difference, no result
+        above int8 capacity  -> both configs evict, no difference, no result
+        in between           -> bf16 evicts and recomputes, int8 hits
+
+    This is printed before the run because getting it wrong wastes the run, and
+    the arithmetic is cheap: the shared-prefix dataset gives each group a
+    distinct prefix of ``gsp_question_len`` tokens, reused by
+    ``prompts_per_group`` prompts.
+    """
+    prefix_tokens = args.num_groups * args.gsp_prefix_len
+    l1 = args.max_total_tokens or 0
+    bf16_cap = budget["bf16"]["token_capacity"] if budget else 0
+    int8_cap = budget["int8"]["token_capacity"] if budget else 0
+
+    if not budget:
+        verdict = "no fixed host budget (--hicache-ratio sizing); cannot predict"
+    elif prefix_tokens < bf16_cap:
+        verdict = (
+            f"TOO SMALL: {prefix_tokens:,} reusable tokens fit the BF16 L2 "
+            f"({bf16_cap:,}), so both configs hold everything and the comparison "
+            f"is uninformative. Raise --num-groups or --gsp-question-len."
+        )
+    elif prefix_tokens > int8_cap:
+        verdict = (
+            f"TOO LARGE: {prefix_tokens:,} reusable tokens exceed even the INT8 L2 "
+            f"({int8_cap:,}), so both configs evict. Lower --num-groups."
+        )
+    else:
+        verdict = (
+            f"DISCRIMINATING: {prefix_tokens:,} reusable tokens exceed the BF16 L2 "
+            f"({bf16_cap:,}) but fit the INT8 L2 ({int8_cap:,}). BF16 must evict "
+            f"and recompute where INT8 can hit."
+        )
+    if l1 and l1 >= prefix_tokens:
+        verdict += (
+            f" WARNING: L1 cap {l1:,} >= working set, so nothing reaches L2 at "
+            f"all; lower --max-total-tokens."
+        )
+    return {
+        "reusable_prefix_tokens": prefix_tokens,
+        "l1_capacity_cap": l1,
+        "bf16_l2_capacity": bf16_cap,
+        "int8_l2_capacity": int8_cap,
+        "verdict": verdict,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -285,14 +363,50 @@ def main() -> int:
     parser.add_argument("--tag", required=True, help="label for this run, e.g. exp-b-8gb")
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--host-size", type=float, default=8.0, help="decimal GB")
+    parser.add_argument(
+        "--max-total-tokens",
+        type=int,
+        default=16384,
+        help=(
+            "Cap the L1 (device) KV pool. Required for these experiments: the "
+            "default L1 on a 48 GB card holds millions of tokens, so a workload "
+            "that fits in L1 never reaches L2 and nothing is measured. The "
+            "reusable working set must overflow this."
+        ),
+    )
     parser.add_argument("--tp", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=1)
     parser.add_argument("--layer-num", type=int, default=36)
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--workload", default="small", choices=["small", "reusable-prefixes"])
-    parser.add_argument("--num-groups", type=int, default=8)
+    parser.add_argument(
+        "--num-groups",
+        type=int,
+        default=32,
+        help=(
+            "Number of distinct reusable prefixes. 32 x 2048 = 65,536 tokens, "
+            "which sits between the 8 GB BF16 (54,254) and INT8 (96,451) L2 "
+            "capacities -- the range where the comparison means something."
+        ),
+    )
     parser.add_argument("--prompts-per-group", type=int, default=4)
-    parser.add_argument("--gsp-question-len", type=int, default=2048)
+    parser.add_argument(
+        "--gsp-prefix-len",
+        type=int,
+        default=2048,
+        help=(
+            "Reusable per-group prefix length (--gsp-system-prompt-len). The "
+            "aggregate working set is num_groups * this, and Experiment B only "
+            "discriminates when that lands between the BF16 and INT8 L2 "
+            "capacities -- checked and reported before the run."
+        ),
+    )
+    parser.add_argument(
+        "--gsp-question-len",
+        type=int,
+        default=64,
+        help="Per-prompt question length, appended after the shared prefix.",
+    )
     parser.add_argument("--max-concurrency", type=int, default=8)
     parser.add_argument("--startup-timeout", type=float, default=900.0)
     parser.add_argument("--flush-cache", action="store_true", default=True)
@@ -302,7 +416,10 @@ def main() -> int:
     args = parser.parse_args()
 
     sglang_root = Path(args.sglang_root).expanduser().resolve()
-    config = build_configs(args.model, args.host_size, args.tp, args.page_size)[args.config]
+    config = build_configs(
+        args.model, args.host_size, args.tp, args.page_size,
+        max_total_tokens=args.max_total_tokens,
+    )[args.config]
     workload = build_workloads(args)[args.workload]
     budget = capacity_budget(args.host_size, args.layer_num) if args.host_size > 0 else {}
 
@@ -323,6 +440,10 @@ def main() -> int:
             print(f"budget   : bf16={budget['bf16']['token_capacity']:,} tokens, "
                   f"int8={budget['int8']['token_capacity']:,} tokens "
                   f"({budget['gain']:.4f}x)")
+            wb = workload_budget(args, budget)
+            print(f"workload : {wb['reusable_prefix_tokens']:,} reusable prefix "
+                  f"tokens | L1 cap {wb['l1_capacity_cap']:,}")
+            print(f"verdict  : {wb['verdict']}")
         return 0
 
     if not (sglang_root / "python" / "sglang").is_dir():
@@ -347,6 +468,11 @@ def main() -> int:
               f"int8 {budget['int8']['token_capacity']:,} tokens "
               f"({budget['gain']:.4f}x)")
     print(f"=== server log: {server_log}")
+    if budget:
+        wb = workload_budget(args, budget)
+        print(f"=== workload budget: {wb['reusable_prefix_tokens']:,} reusable "
+              f"prefix tokens | L1 cap {wb['l1_capacity_cap']:,}")
+        print(f"=== {wb['verdict']}")
 
     with open(server_log, "w") as log:
         proc = subprocess.Popen(
