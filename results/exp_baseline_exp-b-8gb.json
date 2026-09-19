@@ -1,0 +1,113 @@
+{
+  "config": "baseline",
+  "config_label": "A: HiCache disabled (prefill recompute)",
+  "tag": "exp-b-8gb",
+  "workload": {
+    "name": "reusable-prefixes",
+    "bench_args": [
+      "--dataset-name",
+      "generated-shared-prefix",
+      "--gsp-num-groups",
+      "32",
+      "--gsp-prompts-per-group",
+      "4",
+      "--gsp-system-prompt-len",
+      "2048",
+      "--gsp-question-len",
+      "64",
+      "--gsp-output-len",
+      "32",
+      "--num-prompts",
+      "128",
+      "--max-concurrency",
+      "8",
+      "--cache-report"
+    ],
+    "description": "aggregate reusable prefixes sized between the BF16 and INT8 L2 capacities (the real end-to-end value proposition)"
+  },
+  "host_size_gb": 8.0,
+  "tp": 1,
+  "page_size": 1,
+  "model": "Qwen/Qwen3-8B",
+  "env": {},
+  "server_args": [
+    "/usr/local/bin/python",
+    "-m",
+    "sglang.launch_server",
+    "--model-path",
+    "Qwen/Qwen3-8B",
+    "--tp-size",
+    "1",
+    "--page-size",
+    "1",
+    "--trust-remote-code",
+    "--enable-metrics",
+    "--max-total-tokens",
+    "16384",
+    "--port",
+    "30000"
+  ],
+  "sglang_sha": "9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1",
+  "capacity_budget": {
+    "bf16": {
+      "size_per_token": 147456,
+      "token_capacity": 54254
+    },
+    "int8": {
+      "size_per_token": 82944,
+      "token_capacity": 96451
+    },
+    "gain": 1.7777675378773916
+  },
+  "ok": true,
+  "startup_seconds": 61.056618452072144,
+  "metrics_absolute_before": {
+    "sglang:hicache_backup_bytes_total": 0.0,
+    "sglang:hicache_backup_tokens_total": 0.0,
+    "sglang:hicache_backup_duration_seconds": 0.0,
+    "sglang:load_back_bytes_total": 0.0,
+    "sglang:load_back_tokens_total": 0.0,
+    "sglang:load_back_duration_seconds": 0.0,
+    "sglang:hicache_host_used_tokens": 0.0,
+    "sglang:hicache_host_total_tokens": 0.0,
+    "sglang:hicache_dropped_tokens_total": 0.0,
+    "sglang:cache_hit_rate": 0.0,
+    "sglang:prompt_tokens_total": 6.0,
+    "sglang:generation_tokens_total": 8.0
+  },
+  "flushed_cache": true,
+  "benchmark_seconds": 67.28187084197998,
+  "benchmark_stdout": "benchmark_args=Namespace(backend='sglang', base_url='http://127.0.0.1:30000', host='0.0.0.0', port=None, ready_check_timeout_sec=60, dataset_name='generated-shared-prefix', dataset_path='', dataset_offset=0, agentic_max_turns=None, speed_bench_category=None, speed_bench_output_len=512, model='Qwen/Qwen3-8B', served_model_name=None, tokenizer=None, num_prompts=128, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1024, random_output_len=1024, random_range_ratio=0.0, image_count=1, image_resolution='1080p', random_image_count=False, image_format='jpeg', image_content='random', request_rate=inf, use_trace_timestamps=False, max_concurrency=8, output_file=None, output_details=False, print_requests=False, disable_tqdm=False, disable_stream=False, return_logprob=False, top_logprobs_num=0, token_ids_logprob=None, logprob_start_len=-1, return_routed_experts=False, cache_report=True, seed=42, disable_ignore_eos=False, temperature=0.0, top_p=1.0, extra_request_body=None, apply_chat_template=False, profile=False, plot_throughput=False, profile_activities=['CPU', 'GPU'], profile_start_step=None, profile_steps=None, profile_num_steps=None, profile_by_stage=False, profile_stages=None, profile_output_dir=None, profile_prefix=None, lora_name=None, lora_request_distribution='uniform', lora_zipf_alpha=1.5, prompt_suffix='', pd_separated=False, profile_prefill_url=None, profile_decode_url=None, flush_cache=False, flush_cache_timeout=60.0, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=32, gsp_prompts_per_group=4, gsp_system_prompt_len=2048, gsp_question_len=64, gsp_output_len=32, gsp_range_ratio=1.0, gsp_fast_prepare=False, gsp_send_routing_key=False, gsp_num_turns=1, gsp_ordered=False, gsp_group_distribution='uniform', gsp_zipf_alpha=None, mooncake_slowdown_factor=1.0, mooncake_num_rounds=1, mooncake_workload='conversation', fake_prefill=False, tag=None, header=None)\nWaiting up to 60s for http://127.0.0.1:30000/v1/models to become ready...\nServer ready in 0.0s.\nNamespace(backend='sglang', base_url='http://127.0.0.1:30000', host='0.0.0.0', port=30000, ready_check_timeout_sec=60, dataset_name='generated-shared-prefix', dataset_path='', dataset_offset=0, agentic_max_turns=None, speed_bench_category=None, speed_bench_output_len=512, model='Qwen/Qwen3-8B', served_model_name=None, tokenizer=None, num_prompts=128, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1024, random_output_len=1024, random_range_ratio=0.0, image_count=1, image_resolution='1080p', random_image_count=False, image_format='jpeg', image_content='random', request_rate=inf, use_trace_timestamps=False, max_concurrency=8, output_file=None, output_details=False, print_requests=False, disable_tqdm=False, disable_stream=False, return_logprob=False, top_logprobs_num=0, token_ids_logprob=None, logprob_start_len=-1, return_routed_experts=False, cache_report=True, seed=42, disable_ignore_eos=False, temperature=0.0, top_p=1.0, extra_request_body=None, apply_chat_template=False, profile=False, plot_throughput=False, profile_activities=['CPU', 'GPU'], profile_start_step=None, profile_steps=None, profile_num_steps=None, profile_by_stage=False, profile_stages=None, profile_output_dir=None, profile_prefix=None, lora_name=None, lora_request_distribution='uniform', lora_zipf_alpha=1.5, prompt_suffix='', pd_separated=False, profile_prefill_url=None, profile_decode_url=None, flush_cache=False, flush_cache_timeout=60.0, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=32, gsp_prompts_per_group=4, gsp_system_prompt_len=2048, gsp_question_len=64, gsp_output_len=32, gsp_range_ratio=1.0, gsp_fast_prepare=False, gsp_send_routing_key=False, gsp_num_turns=1, gsp_ordered=False, gsp_group_distribution='uniform', gsp_zipf_alpha=None, mooncake_slowdown_factor=1.0, mooncake_num_rounds=1, mooncake_workload='conversation', fake_prefill=False, tag=None, header=None)\n\n\nGenerating new input data... (num_groups=32, 4, system_prompt_len=2048, question_len=64, output_len=32, range_ratio=1.0, num_turns=1, group_distribution='uniform', zipf_alpha=None)\n\nGenerated shared prefix dataset statistics:\nNumber of groups: 32\nPrompts per group: 4\nNumber of turns: 1\nGroup distribution: uniform\nTotal prompts: 128\nTotal input tokens: 284198\nTotal output tokens: 4096\nAverage system prompt length: 2151.8 tokens\nAverage question length: 67.5 tokens\n\nCaching generated input data to /root/.cache/sglang/benchmark/gen_shared_prefix_42_32_4_2048_64_32_Qwen2Tokenizer.pkl\nStarting warmup with 1 sequences...\nWarmup completed with 1 sequences. Starting main benchmark run...\n\n============ Serving Benchmark Result ============\nBackend:                                 sglang    \nTraffic request rate:                    inf       \nMax request concurrency:                 8         \nSuccessful requests:                     128       \nBenchmark duration (s):                  51.20     \nTotal input tokens:                      284198    \nTotal input text tokens:                 284198    \nTotal generated tokens:                  4096      \nTotal generated tokens (retokenized):    3954      \nRequest throughput (req/s):              2.50      \nInput token throughput (tok/s):          5550.27   \nOutput token throughput (tok/s):         79.99     \nPeak output token throughput (tok/s):    251.00    \nPeak concurrent requests:                16        \nTotal token throughput (tok/s):          5630.27   \nConcurrency:                             7.82      \n----------------End-to-End Latency----------------\nMean E2E Latency (ms):                   3128.04   \nMedian E2E Latency (ms):                 3050.57   \nP90 E2E Latency (ms):                    3377.61   \nP95 E2E Latency (ms):                    5743.41   \nP99 E2E Latency (ms):                    6143.11   \n---------------Time to First Token----------------\nMean TTFT (ms):                          1643.02   \nMedian TTFT (ms):                        1644.68   \nP90 TTFT (ms):                           2296.52   \nP95 TTFT (ms):                           3384.07   \nP99 TTFT (ms):                           3626.34   \n-----Time per Output Token (excl. 1st token)------\nMean TPOT (ms):                          47.90     \nMedian TPOT (ms):                        40.80     \nP90 TPOT (ms):                           78.04     \nP95 TPOT (ms):                           87.17     \nP99 TPOT (ms):                           88.18     \n---------------Inter-Token Latency----------------\nMean ITL (ms):                           47.90     \nMedian ITL (ms):                         27.02     \nP90 ITL (ms):                            27.90     \nP95 ITL (ms):                            30.89     \nP99 ITL (ms):                            1021.40   \nMax ITL (ms):                            2212.25   \n----------------Cache Hit Details-----------------\nTotal prompt tokens:                     284198    \nTotal cached tokens:                     34547     \n  Device:                                34547     \n  Host:                                  0         \nCache hit rate:                          12.2%\n  Device:                                100.0%\n  Host:                                  0.0%\n==================================================\n",
+  "benchmark_stderr": "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n\nGenerating shared-prefix prompts:   0%|          | 0/128 [00:00<?, ?it/s]\nGenerating shared-prefix prompts:  20%|\u2588\u2588        | 26/128 [00:00<00:00, 256.05it/s]\nGenerating shared-prefix prompts:  41%|\u2588\u2588\u2588\u2588      | 52/128 [00:00<00:00, 220.98it/s]\nGenerating shared-prefix prompts:  59%|\u2588\u2588\u2588\u2588\u2588\u258a    | 75/128 [00:00<00:00, 200.75it/s]\nGenerating shared-prefix prompts:  75%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258c  | 96/128 [00:00<00:00, 192.87it/s]\nGenerating shared-prefix prompts:  91%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 | 116/128 [00:00<00:00, 188.23it/s]\nGenerating shared-prefix prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 128/128 [00:00<00:00, 195.65it/s]\n\n  0%|          | 0/128 [00:00<?, ?it/s]\n  1%|          | 1/128 [00:02<05:53,  2.78s/it]\n  6%|\u258b         | 8/128 [00:05<01:17,  1.54it/s]\n 12%|\u2588\u258f        | 15/128 [00:09<01:02,  1.80it/s]\n 18%|\u2588\u258a        | 23/128 [00:11<00:47,  2.20it/s]\n 23%|\u2588\u2588\u258e       | 30/128 [00:15<00:44,  2.22it/s]\n 29%|\u2588\u2588\u2589       | 37/128 [00:18<00:40,  2.25it/s]\n 35%|\u2588\u2588\u2588\u258c      | 45/128 [00:21<00:35,  2.36it/s]\n 41%|\u2588\u2588\u2588\u2588      | 52/128 [00:24<00:32,  2.33it/s]\n 46%|\u2588\u2588\u2588\u2588\u258c     | 59/128 [00:26<00:28,  2.46it/s]\n 52%|\u2588\u2588\u2588\u2588\u2588\u258f    | 67/128 [00:29<00:23,  2.58it/s]\n 59%|\u2588\u2588\u2588\u2588\u2588\u258a    | 75/128 [00:32<00:19,  2.76it/s]\n 65%|\u2588\u2588\u2588\u2588\u2588\u2588\u258d   | 83/128 [00:35<00:16,  2.70it/s]\n 70%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588   | 90/128 [00:37<00:14,  2.64it/s]\n 76%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258c  | 97/128 [00:40<00:11,  2.60it/s]\n 82%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258f | 105/128 [00:43<00:08,  2.59it/s]\n 88%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258a | 113/128 [00:46<00:05,  2.59it/s]\n 94%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258d| 120/128 [00:49<00:03,  2.56it/s]\n 99%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2589| 127/128 [00:51<00:00,  2.97it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 128/128 [00:51<00:00,  2.50it/s]\n",
+  "benchmark_returncode": 0,
+  "metrics_absolute_after": {
+    "sglang:hicache_backup_bytes_total": 0.0,
+    "sglang:hicache_backup_tokens_total": 0.0,
+    "sglang:hicache_backup_duration_seconds": 0.0,
+    "sglang:load_back_bytes_total": 0.0,
+    "sglang:load_back_tokens_total": 0.0,
+    "sglang:load_back_duration_seconds": 0.0,
+    "sglang:hicache_host_used_tokens": 0.0,
+    "sglang:hicache_host_total_tokens": 0.0,
+    "sglang:hicache_dropped_tokens_total": 0.0,
+    "sglang:cache_hit_rate": 0.0,
+    "sglang:prompt_tokens_total": 286429.0,
+    "sglang:generation_tokens_total": 4136.0
+  },
+  "metrics_delta": {
+    "sglang:hicache_backup_bytes_total": 0.0,
+    "sglang:hicache_backup_tokens_total": 0.0,
+    "sglang:hicache_backup_duration_seconds": 0.0,
+    "sglang:load_back_bytes_total": 0.0,
+    "sglang:load_back_tokens_total": 0.0,
+    "sglang:load_back_duration_seconds": 0.0,
+    "sglang:hicache_host_used_tokens": 0.0,
+    "sglang:hicache_host_total_tokens": 0.0,
+    "sglang:hicache_dropped_tokens_total": 0.0,
+    "sglang:cache_hit_rate": 0.0,
+    "sglang:prompt_tokens_total": 286423.0,
+    "sglang:generation_tokens_total": 4128.0
+  },
+  "derived": {},
+  "server_log_tail": "[2026-09-25 12:02:00] Prefill batch, #new-seq: 3, #new-token: 2944, #cached-token: 2149, token usage: 0.95, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6880.44\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34002 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34014 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34022 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34030 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34038 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34040 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34056 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] INFO:     127.0.0.1:34058 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:01] Prefill batch, #new-seq: 1, #new-token: 2225, #cached-token: 0, token usage: 0.14, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1860.00\n[2026-09-25 12:02:02] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.64, #running-req: 1, #queue-req: 3, #pending-token: 11461, cuda graph: True, input throughput (token/s): 6881.28\n[2026-09-25 12:02:02] Prefill batch, #new-seq: 3, #new-token: 4096, #cached-token: 0, token usage: 0.89, #running-req: 2, #queue-req: 1, #pending-token: 7365, cuda graph: True, input throughput (token/s): 7087.70\n[2026-09-25 12:02:03] Prefill batch, #new-seq: 3, #new-token: 4096, #cached-token: 0, token usage: 0.95, #running-req: 4, #queue-req: 1, #pending-token: 3269, cuda graph: True, input throughput (token/s): 7115.25\n[2026-09-25 12:02:03] Prefill batch, #new-seq: 1, #new-token: 1046, #cached-token: 0, token usage: 0.95, #running-req: 6, #queue-req: 1, #pending-token: 2223, cuda graph: True, input throughput (token/s): 6189.43\n[2026-09-25 12:02:03] Decode batch, #running-req: 7, #token: 15588, token usage: 0.95, cuda graph: True, gen throughput (token/s): 56.00, #queue-req: 1\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48328 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48336 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48338 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48340 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48344 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48346 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] INFO:     127.0.0.1:48348 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:04] Prefill batch, #new-seq: 2, #new-token: 2292, #cached-token: 2167, token usage: 0.52, #running-req: 6, #queue-req: 1, #pending-token: 0, cuda graph: True, input throughput (token/s): 1886.67\n[2026-09-25 12:02:05] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.77, #running-req: 8, #queue-req: 2, #pending-token: 2503, cuda graph: True, input throughput (token/s): 7238.98\n[2026-09-25 12:02:05] Prefill batch, #new-seq: 3, #new-token: 4096, #cached-token: 0, token usage: 0.95, #running-req: 9, #queue-req: 1, #pending-token: 5084, cuda graph: True, input throughput (token/s): 7075.10\n[2026-09-25 12:02:06] Prefill batch, #new-seq: 2, #new-token: 2861, #cached-token: 0, token usage: 0.95, #running-req: 11, #queue-req: 1, #pending-token: 2223, cuda graph: True, input throughput (token/s): 6787.54\n[2026-09-25 12:02:06] Decode batch, #running-req: 7, #token: 15596, token usage: 0.95, cuda graph: True, gen throughput (token/s): 93.08, #queue-req: 1\n[2026-09-25 12:02:07] INFO:     127.0.0.1:48350 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-09-25 12:02:07] Prefill batch, #new-seq: 2, #new-token: 4096, #cached-token: 0, token usage: 0.16, #running-req: 0, #queue-req: 0, #pending-token: 346, cuda graph: True, input throughput (token/s): 2820.16\n[2026-09-25 12:02:07] Prefill batch, #new-seq: 1, #new-token: 346, #cached-token: 0, token usage: 0.14, #running-req: 1, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6022.30\n[2026-09-25 12:02:08] Decode batch, #running-req: 2, #token: 2329, token usage: 0.14, cuda graph: True, gen throughput (token/s): 110.83, #queue-req: 0\n[2026-09-25 12:02:08] INFO:     127.0.0.1:48360 - \"GET /server_info HTTP/1.1\" 200 OK\n[2026-09-25 12:02:08] INFO:     127.0.0.1:48366 - \"GET /server_info HTTP/1.1\" 200 OK\n[2026-09-25 12:02:10] INFO:     127.0.0.1:48368 - \"GET /metrics HTTP/1.1\" 200 OK\n[2026-09-25 12:02:10] SIGTERM received. signum=None frame=None. Draining requests and shutting down...\n[2026-09-25 12:02:10] Subprocess detokenizer (pid=14993) crashed with exit code -15. Triggering SIGQUIT for cleanup...\n[2026-09-25 12:02:10] SIGQUIT received. signum=None, frame=None. It usually means one child failed.\n[2026-09-25 12:02:10] Sleeping 5 seconds before crash diagnostics to let GPU activity settle.\n[2026-09-25 12:02:15] No live scheduler processes found; skipping py-spy and CUDA coredump.\n[2026-09-25 12:02:15] kill_process_tree called: parent_pid=14856, include_parent=True, pid=14856"
+}

@@ -1,0 +1,205 @@
+{
+  "device": "cuda",
+  "platform": "Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+  "machine": "x86_64",
+  "python": "3.12.3",
+  "torch": "2.14.0+cu130",
+  "cwru": {
+    "device_name": "NVIDIA RTX A6000",
+    "capability": [
+      8,
+      6
+    ],
+    "cuda_version": "13.0"
+  },
+  "vectors_file": "conformance_vectors.pt",
+  "layout": {
+    "row_bytes": 1152,
+    "payload_bytes": 1024,
+    "scale_bytes": 16,
+    "padding_bytes": 112
+  },
+  "qwen3_8b_compression": {
+    "layer_num": 36,
+    "head_num": 8,
+    "head_dim": 128,
+    "row_bytes": 1152,
+    "baseline_bytes_per_token": 147456,
+    "encoded_bytes_per_token": 82944,
+    "reduction_fraction": 0.4375,
+    "compression_ratio": 1.7777777777777777
+  },
+  "vectors": {
+    "all_zeros": {
+      "input_shape": [
+        32,
+        8,
+        128
+      ],
+      "input_digest": "a04d22fefe393845831829795eec0ba3",
+      "records_digest": "a8b93e156039f0a4768daae8bc5e0ef6",
+      "payload_digest": "15e5639eb11175a20ed5af99039ec687",
+      "scales_digest": "c7cce60eb2984beac9519539ae6ef1b1",
+      "restored_digest": "a04d22fefe393845831829795eec0ba3",
+      "max_abs_over_scale": 0.0,
+      "mean_abs": 0.0,
+      "max_abs": 0.0,
+      "p99_abs": 0.0,
+      "p50_rel": NaN,
+      "bound_violations": 0,
+      "worst_bound_excess": -7.641172457825659e-37
+    },
+    "exact_grid": {
+      "input_shape": [
+        16,
+        8,
+        128
+      ],
+      "input_digest": "3a190ab72b6318b777966c631c486977",
+      "records_digest": "f6367970a15973068041f2b0024dae51",
+      "payload_digest": "332ac9168bb867670a4adb9c2f4f0531",
+      "scales_digest": "964b5e42b0e0dce1d906cde3063bc0d7",
+      "restored_digest": "3a190ab72b6318b777966c631c486977",
+      "max_abs_over_scale": 0.0,
+      "mean_abs": 0.0,
+      "max_abs": 0.0,
+      "p99_abs": 0.0,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -0.0039675235748291016
+    },
+    "mixed_magnitudes": {
+      "input_shape": [
+        64,
+        8,
+        128
+      ],
+      "input_digest": "3a7933ae0558d6f1615c1cb4bae9bbee",
+      "records_digest": "5bb5845f7d05166d1851238f08abd551",
+      "payload_digest": "586cb6d3c103efc40cf3e041403e2687",
+      "scales_digest": "6f440e88c50597d8d9c333f5d2849f96",
+      "restored_digest": "9c1131904e5d748728dc637727df2b5b",
+      "max_abs_over_scale": 0.8590604066848755,
+      "mean_abs": 0.02732372283935547,
+      "max_abs": 0.0625,
+      "p99_abs": 0.0625,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -7.641172457825659e-37
+    },
+    "power_of_two_absmax": {
+      "input_shape": [
+        24,
+        8,
+        128
+      ],
+      "input_digest": "8026ca354c4555a49896be954614fb42",
+      "records_digest": "0facef81a9bbda221f403f0069ad64b7",
+      "payload_digest": "46ea7c21589eaa1195e7030b3c5ea96b",
+      "scales_digest": "d6b4f66de31adb4335ed17c166e47d6f",
+      "restored_digest": "e56af83fa1f237385269ee2e9730c049",
+      "max_abs_over_scale": 0.5765765905380249,
+      "mean_abs": 4.742212295532227,
+      "max_abs": 128.0,
+      "p99_abs": 128.0,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -1.069623976945877e-06
+    },
+    "qwen3_8b_shaped": {
+      "input_shape": [
+        512,
+        8,
+        128
+      ],
+      "input_digest": "9ecc976df98d7634485486f54d8f1192",
+      "records_digest": "81cf3047bcba0b8ea1bc2c6763ec9e79",
+      "payload_digest": "4696a67ddfc0c82ca533926b44257a93",
+      "scales_digest": "1400906e01a2812ec6029a95d480551e",
+      "restored_digest": "2a53d0122cdaf425484ce3d77e0af201",
+      "max_abs_over_scale": 0.5844748616218567,
+      "mean_abs": 0.028236865997314453,
+      "max_abs": 0.0625,
+      "p99_abs": 0.0625,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -0.02459716796875
+    },
+    "random_large": {
+      "input_shape": [
+        64,
+        8,
+        128
+      ],
+      "input_digest": "5a816923ac9ff2cf256693f220db9111",
+      "records_digest": "09531d9a47b7e90340648686f60b0347",
+      "payload_digest": "1e528ab49e8f450115f70dc6a20a4a7c",
+      "scales_digest": "43662deadc3a16516d08e98d6a84d62f",
+      "restored_digest": "a7a0225c41d40e21e85196bec7a8d937",
+      "max_abs_over_scale": 0.5925925970077515,
+      "mean_abs": 27.9296875,
+      "max_abs": 64.0,
+      "p99_abs": 64.0,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -25.185546875
+    },
+    "random_small": {
+      "input_shape": [
+        64,
+        8,
+        128
+      ],
+      "input_digest": "16fb9e00edf2bfd53ff8bb019dcee200",
+      "records_digest": "f5c47b5303d52915ab97cd2cdc4ef0ec",
+      "payload_digest": "33eb6f0ae2f39c6814a1f4c0f6ec6b63",
+      "scales_digest": "b0817dbb088c31dab610a10344107037",
+      "restored_digest": "95acb2c427b4aa7e03c7d3ec8ac1d751",
+      "max_abs_over_scale": 0.5614035129547119,
+      "mean_abs": 2.8473325073719025e-05,
+      "max_abs": 6.103515625e-05,
+      "p99_abs": 6.103515625e-05,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -2.880208194255829e-05
+    },
+    "random_unit": {
+      "input_shape": [
+        128,
+        8,
+        128
+      ],
+      "input_digest": "f33579ee73b660ee4f7ffc7df07e5fb9",
+      "records_digest": "029398fb7ca8bc4d250ee143a9e445a8",
+      "payload_digest": "085c9c2419b570eb45b497ee71ad30f9",
+      "scales_digest": "5f7a845f8336bc91e5cbabed5f06e770",
+      "restored_digest": "c2060282d08d53f0924290642d8752c9",
+      "max_abs_over_scale": 0.581818163394928,
+      "mean_abs": 0.028167009353637695,
+      "max_abs": 0.0625,
+      "p99_abs": 0.0625,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -0.025335311889648438
+    },
+    "tiny_values": {
+      "input_shape": [
+        32,
+        8,
+        128
+      ],
+      "input_digest": "5c64e94f448c23bebbc49892cefbbb3e",
+      "records_digest": "4494e7d6cc8dbfc55951a2e452a261b0",
+      "payload_digest": "67f79600235e62ddff8a828ce5ec0f14",
+      "scales_digest": "d77f3b327719c5f740e8aa86861b9441",
+      "restored_digest": "bf1942cf7290d11be98accf4f992fd8a",
+      "max_abs_over_scale": 0.9078013896942139,
+      "mean_abs": 2.417042080205981e-32,
+      "max_abs": 9.860761315262648e-32,
+      "p99_abs": 9.860761315262648e-32,
+      "p50_rel": 0.0,
+      "bound_violations": 0,
+      "worst_bound_excess": -6.20811480511073e-33
+    }
+  }
+}

@@ -72,6 +72,7 @@ class Run:
     check: dict | None = None
     error: str | None = None
     benchmark_stdout: str = ""
+    bench: dict = field(default_factory=dict)
 
     @property
     def label(self) -> str:
@@ -102,9 +103,52 @@ def load_runs(root: Path) -> list[Run]:
                 check=payload.get("encoded_bytes_per_token_check"),
                 error=payload.get("error"),
                 benchmark_stdout=payload.get("benchmark_stdout", ""),
+                bench=parse_benchmark(payload.get("benchmark_stdout", "")),
             )
         )
     return runs
+
+
+#: Metrics the benchmark itself reports, which are the ones that answer
+#: PROJECT.md's serving questions. The Prometheus counters above are cumulative
+#: process-lifetime totals and are useful for the codec's byte arithmetic, but
+#: they say nothing about cache effectiveness -- an earlier version of this file
+#: compared prefill tokens across configs and concluded "comparable
+#: recomputation" while the benchmark's own report showed a 16.6-point cache-hit
+#: gap. Read the benchmark's numbers for serving, the counters for bytes.
+_BENCH_FIELDS = {
+    "hit_rate_pct": r"Cache hit rate:\s*([0-9.]+)%",
+    "ttft_mean_ms": r"Mean TTFT \(ms\):\s*([0-9.]+)",
+    "ttft_p99_ms": r"P99 TTFT \(ms\):\s*([0-9.]+)",
+    "tpot_mean_ms": r"Mean TPOT \(ms\):\s*([0-9.]+)",
+    "itl_p99_ms": r"P99 ITL \(ms\):\s*([0-9.]+)",
+    "out_tok_per_s": r"Output token throughput \(tok/s\):\s*([0-9.]+)",
+    "prompt_tokens": r"Total prompt tokens:\s*([0-9]+)",
+    "cached_total": r"Total cached tokens:\s*([0-9]+)",
+}
+
+
+def parse_benchmark(stdout: str) -> dict:
+    """Pull the serving metrics out of sglang.benchmark.serving's report."""
+    import re as _re
+
+    out = {}
+    for key, pattern in _BENCH_FIELDS.items():
+        m = _re.search(pattern, stdout or "")
+        if m:
+            out[key] = float(m.group(1))
+    # The Host/Device split appears twice (tokens, then rate); take the token
+    # block, which is the first occurrence after "Total cached tokens".
+    block = (stdout or "").split("Total cached tokens:", 1)
+    if len(block) == 2:
+        tail = block[1]
+        dm = _re.search(r"Device:\s*([0-9]+)", tail)
+        hm = _re.search(r"Host:\s*([0-9]+)", tail)
+        if dm:
+            out["cached_device_tokens"] = float(dm.group(1))
+        if hm:
+            out["cached_host_tokens"] = float(hm.group(1))
+    return out
 
 
 def group(runs: list[Run]) -> dict[tuple[str, str], dict[str, Run]]:
@@ -166,8 +210,13 @@ def print_comparison(tag: str, workload: str, configs: dict[str, Run]) -> None:
     print(f"  {'metric':<30}" + "".join(f"{c:>15}" for c in order))
     print("  " + "-" * (30 + 15 * len(order)))
 
+    # L2 capacity is a GAUGE, not a counter: its delta across the measured phase
+    # is zero by definition. Read the absolute value -- it is the fixed
+    # allocation the entire experiment turns on.
     row("L2 capacity (tokens)",
-        lambda r: r.delta.get("sglang:hicache_host_total_tokens"))
+        lambda r: r.absolute.get("sglang:hicache_host_total_tokens"))
+    row("L2 tokens used (final)",
+        lambda r: r.absolute.get("sglang:hicache_host_used_tokens"))
     row("backup bytes",
         lambda r: r.delta.get("sglang:hicache_backup_bytes_total"), "bytes")
     row("measured B/token (backup)",
@@ -178,47 +227,61 @@ def print_comparison(tag: str, workload: str, configs: dict[str, Run]) -> None:
         lambda r: r.delta.get("sglang:hicache_backup_duration_seconds"), "seconds")
     row("restore time",
         lambda r: r.delta.get("sglang:load_back_duration_seconds"), "seconds")
-    row("prefix cache hit rate",
-        lambda r: r.delta.get("sglang:cache_hit_rate"), "ratio")
-    row("prefill tokens (recompute)",
-        lambda r: r.delta.get("sglang:prompt_tokens_total"))
-    row("L2 evictions",
-        lambda r: r.delta.get("sglang:hicache_dropped_tokens_total"))
-
-    # Effective bandwidth, shown separately because it is a derived ratio rather
-    # than a counter and needs different formatting.
-    print(f"  {'effective bandwidth':<30}" + "".join(f"{c:>15}" for c in order))
-    for label, key in (("  backup GB/s", "backup_GB_per_s"),
-                       ("  restore GB/s", "load_GB_per_s")):
+    # ---- serving metrics, from the benchmark's own report ----------------
+    # These are the numbers PROJECT.md's serving table asks for. The
+    # Prometheus counters above only describe bytes.
+    print(f"  {'serving (benchmark report)':<30}" + "".join(f"{c:>15}" for c in order))
+    for label, key, fmt in (
+        ("cache hit rate %", "hit_rate_pct", "{:,.1f}"),
+        ("cached from host (tokens)", "cached_host_tokens", "{:,.0f}"),
+        ("cached from device (tok)", "cached_device_tokens", "{:,.0f}"),
+        ("TTFT mean (ms)", "ttft_mean_ms", "{:,.1f}"),
+        ("TTFT p99 (ms)", "ttft_p99_ms", "{:,.1f}"),
+        ("TPOT mean (ms)", "tpot_mean_ms", "{:,.1f}"),
+        ("ITL p99 (ms)", "itl_p99_ms", "{:,.1f}"),
+        ("output tok/s", "out_tok_per_s", "{:,.1f}"),
+    ):
         cells = []
         for name in order:
             run = configs.get(name)
-            value = run.derived.get(key) if run else None
-            cells.append(num(value, fmt="{:,.3f}"))
+            value = run.bench.get(key) if run and run.bench else None
+            cells.append(fmt.format(value) if value is not None else "-")
         print(f"  {label:<30}" + "".join(f"{c:>15}" for c in cells))
 
-    # The Experiment B verdict, stated explicitly.
-    if "baseline" in configs and "bf16" in configs and "int8" in configs:
-        def prefill(name):
-            run = configs.get(name)
-            return run.delta.get("sglang:prompt_tokens_total", 0.0) if run else 0.0
-
-        base, bf16, int8 = prefill("baseline"), prefill("bf16"), prefill("int8")
+    # ---- Experiment B verdict, from the metrics that actually bear on it ---
+    if "bf16" in configs and "int8" in configs:
+        b = configs["bf16"].bench or {}
+        i = configs["int8"].bench or {}
         print()
-        print(f"  Experiment B reading:")
-        print(f"    baseline prefill tokens : {base:,.0f}")
-        print(f"    bf16     prefill tokens : {bf16:,.0f}")
-        print(f"    int8     prefill tokens : {int8:,.0f}")
-        if bf16 > 0 and int8 > 0:
-            if int8 < bf16 * 0.9:
-                print("    -> int8 avoids recomputation that bf16 cannot: "
-                      "capacity win confirmed")
-            elif int8 > bf16 * 1.1:
-                print("    -> int8 recomputes MORE than bf16: investigate "
-                      "(workload may not exceed the bf16 L2)")
-            else:
-                print("    -> comparable recomputation: the workload probably "
-                      "fits both L2s; raise --gsp-question-len or --num-groups")
+        print("  Experiment B reading:")
+        if b.get("hit_rate_pct") is None or i.get("hit_rate_pct") is None:
+            print("    benchmark report missing; cannot compare cache effectiveness")
+            return
+        dh = i["hit_rate_pct"] - b["hit_rate_pct"]
+        bh, ih = b.get("cached_host_tokens", 0), i.get("cached_host_tokens", 0)
+        print(f"    cache hit rate      : bf16 {b['hit_rate_pct']:.1f}%  ->  "
+              f"int8 {i['hit_rate_pct']:.1f}%   ({dh:+.1f} points)")
+        print(f"    tokens served by L2 : bf16 {bh:,.0f}  ->  int8 {ih:,.0f}"
+              + (f"   ({(ih / bh - 1) * 100:+.0f}%)" if bh else ""))
+        for key, label in (("ttft_mean_ms", "TTFT mean"),
+                           ("ttft_p99_ms", "TTFT p99"),
+                           ("out_tok_per_s", "output tok/s")):
+            bv, iv = b.get(key), i.get(key)
+            if bv and iv:
+                print(f"    {label:<19} : bf16 {bv:,.1f}  ->  int8 {iv:,.1f}"
+                      f"   ({(iv / bv - 1) * 100:+.1f}%)")
+        if dh > 1.0:
+            print(f"    -> int8 serves MORE of the workload from L2: the capacity")
+            print(f"       gain converts into fewer prefills ({dh:+.1f} hit points).")
+        elif dh < -1.0:
+            print(f"    -> int8 served LESS from L2 ({dh:+.1f} points): investigate")
+        else:
+            print(f"    -> hit rates are within noise ({dh:+.1f} points); the")
+            print(f"       workload may fit both L2s or neither. Re-check the")
+            print(f"       workload budget printed by run_experiment.py.")
+        print()
+        print("    NOTE: single runs. Confirm any difference with repeats before")
+        print("    quoting it; the pod-side spread is not characterised yet.")
 
 
 def print_markdown(runs: list[Run]) -> None:

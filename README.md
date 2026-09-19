@@ -62,6 +62,30 @@ the JIT geometry all change with it. Any other local head count is rejected at
 construction with a message that names the restriction, rather than failing later
 as an opaque payload/geometry mismatch. TP-sharded record formats are future work.
 
+## Results
+
+Qwen3-8B, 1x RTX A6000 48 GB, SGLang `9a7ac7978f49`, same physical CPU budget
+(`--hicache-size 8`) for both cache tiers. Workload: 32 shared-prefix groups x
+2048 tokens = 65,536 reusable prefix tokens.
+
+| metric | baseline (no L2) | BF16 HiCache | **HiQCache INT8** |
+| --- | --- | --- | --- |
+| L2 capacity (tokens) | 0 | 54,254 | **96,451** |
+| measured B/token in L2 | – | 147,456 | **82,944** |
+| cache hit rate | 12.2% | 56.1% | **72.7%** |
+| tokens served from L2 | 0 | 126,997 | **167,899** |
+| TTFT mean | 1,643 ms | 1,244 ms | **922 ms** |
+| output throughput | 80.0 tok/s | 105.1 tok/s | **127.8 tok/s** |
+
+vs BF16 at the same host memory: **+16.6 cache-hit points, +32% tokens served
+from L2, -25.9% mean TTFT, +21.6% throughput.**
+
+The capacity and bytes/token figures are exact: `hicache_host_total_tokens`
+reports 54,254 and 96,451 (the values the layout predicts), and backup bytes
+divided by backup tokens is 147,456.00 and **82,944.00** respectively. The
+latency and throughput deltas are **single runs and still need repeats** --
+see `docs/experiment-b-results.md` for the full table and the limitations.
+
 ## Accuracy
 
 The bound the format actually guarantees, verified elementwise with zero
