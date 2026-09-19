@@ -212,6 +212,9 @@ def main() -> int:
 
     env = dict(os.environ)
     env.update(config.env)
+    # The match-walk diagnostic is the only thing that explains WHY
+    # host_hit_length is 0 when it should not be; it is a no-op unless set.
+    env["SGLANG_HICACHE_DEBUG_MATCH"] = "1"
     env["PYTHONPATH"] = f"{sglang_root / 'python'}:{env.get('PYTHONPATH', '')}"
 
     expected_encoded = V1_LAYOUT.bytes_per_token_all_layers(LAYER_NUM)
@@ -454,6 +457,11 @@ def main() -> int:
                     pass
         lines = log_path.read_text(errors="replace").splitlines()
         report["server_log_tail"] = "\n".join(lines[-40:])
+        # Pull out the match-walk lines specifically: they carry the tree state
+        # behind each request's cache decision.
+        report["match_walk"] = [
+            ln for ln in lines if "HiCache match walk" in ln
+        ][-6:]
 
     report["steps"] = [{"name": s.name, "ok": s.ok, "detail": s.detail} for s in steps]
     failed = [s.name for s in steps if s.ok is False]
@@ -474,6 +482,10 @@ def main() -> int:
         print("=== steps that never ran (aborted before recording a result):")
         for name in not_run:
             print(f"  - {name}")
+    if report.get("match_walk"):
+        print("\n=== HiCache match walk (why each request did or did not hit L2) ===")
+        for line in report["match_walk"]:
+            print("  " + line.split("HiCache match walk: ", 1)[-1])
         print(f"\n=== server log tail ({log_path}):")
         print(report["server_log_tail"])
 
