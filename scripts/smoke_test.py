@@ -170,12 +170,15 @@ def main() -> int:
     parser.add_argument(
         "--max-total-tokens",
         type=int,
-        default=None,
+        default=8192,
         help=(
             "Cap the L1 (device) KV pool. Load-back only fires when a prefix is "
-            "in L2 but NOT in L1, so L1 has to be small enough that the filler "
-            "traffic evicts the shared prefix. Without this the default L1 holds "
-            "everything, the revisit hits L1, and nothing is restored from L2."
+            "in L2 but NOT in L1, so the cap has to leave little headroom above "
+            "the shared prefix. The test prefix measures ~5,900 tokens, so the "
+            "default 8192 leaves ~2,300 tokens -- about four filler requests -- "
+            "before eviction starts, while still comfortably admitting any single "
+            "request. Raise it and the chain fits, the prefix is never evicted, "
+            "and there is nothing to restore."
         ),
     )
     parser.add_argument(
