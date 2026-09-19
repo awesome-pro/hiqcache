@@ -179,6 +179,18 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--filler-words",
+        type=int,
+        default=900,
+        help=(
+            "Words per filler request. Must be comfortably under the L1 cap: "
+            "demotion under write_back needs free device memory, and a tree "
+            "bursting past the cap can leave nodes evicted-but-unbacked, which "
+            "makes them unreachable. ~900 words is roughly 1200 tokens against a "
+            "16,384-token cap."
+        ),
+    )
+    parser.add_argument(
         "--filler-requests",
         type=int,
         default=80,
@@ -309,11 +321,27 @@ def main() -> int:
         # HiCache one. Volume, not size, is what forces eviction.
         step = Step("a cache entry is evicted from L1 to L2 (backup executed)")
         steps.append(step)
-        filler = " ".join(str(i) for i in range(1500))
+        # Each filler request is a SHARED-PREFIX chain, not a set of unrelated
+        # prompts. Two reasons, both learned the hard way:
+        #
+        #  1. Unrelated prompts share ~nothing (the pod log showed
+        #     #cached-token=4), so they never form a deep chain and eviction
+        #     pressure never targets the shared prefix.
+        #  2. Demotion under write_back needs free device memory: the eviction
+        #     path runs the D->H backup and only then calls _demote. A tree
+        #     bursting far past the cap can leave nodes evicted-but-unbacked,
+        #     which is a DEAD node -- `_match_prefix_helper` refuses to descend
+        #     past `child.evicted and not child.backuped`, so the walk stops and
+        #     host_hit_length can never be positive. Keeping each request
+        #     comfortably under the cap keeps eviction in the steady state the
+        #     demote path is designed for.
+        filler_words = max(64, int(args.filler_words))
+        shared = " ".join(str(i) for i in range(max(64, filler_words // 2)))
+        filler = f"{shared} "
         filler_sent = 0
         filler_errors = 0
         for i in range(args.filler_requests):
-            prompt = f"Filler {i}: {filler}\n\nQ: count?\n\nAnswer:"
+            prompt = f"{filler}tail {i}\n\nQ: count?\n\nAnswer:"
             try:
                 post_generate(base_url, prompt, label=f"filler {i}")
                 filler_sent += 1
@@ -322,8 +350,9 @@ def main() -> int:
                 if filler_errors == 1:
                     print(f"    filler request {i} failed: {type(exc).__name__}: {exc}")
         print(
-            f"    sent {filler_sent}/{args.filler_requests} filler requests "
-            f"(~{filler_sent * 1500:,} words) to overflow L1"
+            f"    sent {filler_sent}/{args.filler_requests} filler requests of "
+            f"~{filler_words:,} words sharing a ~{filler_words // 2:,}-word "
+            f"prefix ({filler_sent * filler_words:,} words total)"
         )
         if filler_errors:
             print(
