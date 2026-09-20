@@ -73,6 +73,8 @@ def build_configs(
     tp: int,
     page_size: int,
     max_total_tokens: int | None = None,
+    sizing: str = "fixed-size",
+    host_ratio: float = 2.0,
 ) -> dict:
     """The three Phase 12 configurations, sharing every non-codec setting."""
     common = [
@@ -101,8 +103,14 @@ def build_configs(
         # fires, and every revisit re-prefills -- which is what the smoke test
         # measured: 21.8 GB backed up, 0 tokens ever restored.
         "--hicache-write-policy", "write_back",
-        "--hicache-size", f"{host_size_gb:g}",
     ]
+    if sizing == "ratio":
+        # Equal token capacity across configs: host_size = 0 leaves the pool to
+        # be sized as device_capacity * ratio. This is the only way to compare
+        # codec cost fairly, because --hicache-size gives INT8 1.78x the tokens.
+        hicache_common += ["--hicache-ratio", str(host_ratio)]
+    else:
+        hicache_common += ["--hicache-size", f"{host_size_gb:g}"]
     return {
         # A: no reusable L2 at all -> every L1 miss is a prefill recomputation.
         "baseline": Config(
@@ -364,6 +372,18 @@ def main() -> int:
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--host-size", type=float, default=8.0, help="decimal GB")
     parser.add_argument(
+        "--sizing",
+        choices=["fixed-size", "ratio"],
+        default="fixed-size",
+        help=(
+            "fixed-size: --hicache-size, the SAME PHYSICAL budget for every "
+            "config (Experiment B -- what a fixed amount of host RAM buys). "
+            "ratio: --hicache-ratio, the SAME LOGICAL token capacity for every "
+            "config (Experiment A -- isolates the codec's cost from its "
+            "capacity benefit, since both tiers then cache the same tokens)."
+        ),
+    )
+    parser.add_argument(
         "--max-total-tokens",
         type=int,
         default=16384,
@@ -376,6 +396,8 @@ def main() -> int:
     )
     parser.add_argument("--tp", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=1)
+    parser.add_argument("--host-ratio", type=float, default=2.0,
+                        help="host:device capacity ratio when --sizing ratio")
     parser.add_argument("--layer-num", type=int, default=36)
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--workload", default="small", choices=["small", "reusable-prefixes"])
@@ -419,6 +441,8 @@ def main() -> int:
     config = build_configs(
         args.model, args.host_size, args.tp, args.page_size,
         max_total_tokens=args.max_total_tokens,
+        sizing=args.sizing,
+        host_ratio=args.host_ratio,
     )[args.config]
     workload = build_workloads(args)[args.workload]
     budget = capacity_budget(args.host_size, args.layer_num) if args.host_size > 0 else {}
@@ -450,13 +474,23 @@ def main() -> int:
         print(f"ERROR: SGLang fork not found at {sglang_root}", file=sys.stderr)
         return 2
 
+    out_dir = REPO_ROOT / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     env = dict(os.environ)
     env.update(config.env)
     env["PYTHONPATH"] = f"{sglang_root / 'python'}:{env.get('PYTHONPATH', '')}"
+    # Codec phase timing for Phase 17. The INT8 pool records CUDA events around
+    # encode / decode / each mover call and writes totals on teardown, so this
+    # file appears during shutdown rather than during the run. It decomposes the
+    # L2 path: if encode+decode is negligible next to the D2H copy, fused Triton
+    # kernels are not worth writing.
+    timing_path = out_dir / f"codec_timing_{config.name}_{args.tag}.json"
+    if config.name == "int8":
+        env["SGLANG_HICACHE_INT8_TIMING"] = "1"
+        env["SGLANG_HICACHE_INT8_TIMING_PATH"] = str(timing_path)
     env.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
-    out_dir = REPO_ROOT / "results"
-    out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"exp_{config.name}_{args.tag}"
     server_log = out_dir / f"{stem}.server.log"
 
@@ -574,6 +608,20 @@ def main() -> int:
         _terminate(proc)
         tail = _tail(server_log, 40)
         result["server_log_tail"] = tail
+
+    if config.name == "int8":
+        try:
+            result["codec_timing"] = json.loads(timing_path.read_text())
+            phases = result["codec_timing"].get("phases", {})
+            if phases:
+                print("\n=== codec phase timing (GPU ms, from the pool's teardown)")
+                for phase, stats in phases.items():
+                    print(f"  {phase:<12} total {stats['total_ms']:>12,.1f} ms  "
+                          f"calls {stats['calls']:>8,}  "
+                          f"mean {stats['mean_ms']:>8,.4f} ms")
+        except (OSError, json.JSONDecodeError):
+            print(f"\n=== codec timing file missing ({timing_path.name}); the pool "
+                  f"writes it during teardown, which may have been killed")
 
     path = out_dir / f"{stem}.json"
     path.write_text(json.dumps(result, indent=2) + "\n")
