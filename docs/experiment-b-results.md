@@ -9,6 +9,44 @@ reusable prefix tokens, 128 prompts, concurrency 8. L1 capped at 16,384 tokens.
 
 ---
 
+## Provenance
+
+Every number below is reproduced from the raw JSON and server logs under
+`results/`, which are committed alongside this document.
+
+| item | value |
+| --- | --- |
+| GPU | NVIDIA RTX A6000, 46,068 MiB, sm_86 |
+| driver | 580.159.03 |
+| CUDA (image toolkit) | 13.0 (nvcc V13.0.98) |
+| image | `runpod/pytorch:1.4.0-rc.164-cu1300-torch2130-ubuntu2404` |
+| torch | 2.14.0+cu130 (codec venv); 2.13.0+cu130 (server, matching SGLang's pin) |
+| host | Linux 6.8.0-139-generic x86_64, 62 GB RAM, 16 vCPU |
+| **SGLang SHA measured** | **`9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1`** |
+| branch | `hiqcache/int8-l2` |
+| hiqcache SHA | `3bbe653` |
+
+### The fork has advanced since these measurements
+
+Two commits landed after the measured SHA:
+
+```
+38e366694d  Add per-phase codec timing to the INT8 pool
+ecb6278a0a  Match-walk diagnostic: also report is_write_back
+```
+
+**They do not affect these results.** Both add opt-in instrumentation only: the
+codec timing is gated on `SGLANG_HICACHE_INT8_TIMING` (off by default) and merely
+records CUDA events when on, and the match-walk diagnostic is gated on
+`SGLANG_HICACHE_DEBUG_MATCH` and only logs. Neither alters the codec, the
+mover calls, or the host-pool representation, so the capacity and byte figures --
+which are arithmetic identities over `size_per_token` -- are unaffected.
+
+Any *future* run must re-record its own SHA, which `run_experiment.py` does
+automatically in every result JSON.
+
+---
+
 ## Headline
 
 | metric | baseline (no L2) | BF16 HiCache | **HiQCache INT8** |

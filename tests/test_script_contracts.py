@@ -199,3 +199,47 @@ def test_hicache_configs_pin_the_pool_our_analysis_assumes():
                         flags[value] = nxt
     assert flags.get("--hicache-mem-layout") == "layer_first"
     assert flags.get("--hicache-io-backend") == "kernel"
+
+
+def test_reproduce_all_is_well_formed():
+    """The one-command reproduction script must be runnable and ordered.
+
+    Its value is repeatability, so the checks are about the things that make it
+    silently wrong: a stale flag, a missing regression gate, or the two
+    Experiments being conflated.
+    """
+    source = _script("reproduce_all.sh").read_text()
+
+    # The regression gate must come before any benchmark: if the smoke tests
+    # fail, no benchmark below them would mean anything.
+    smoke = source.index("smoke_test.py")
+    exp_b = source.index('--tag "$TAG"')
+    quality = source.index("quality_compare.py")
+    assert smoke < exp_b < quality, (
+        "order must be smoke (regression) -> Experiment B -> quality"
+    )
+
+    # Experiment B is the same PHYSICAL budget; Experiment A is equal TOKENS.
+    assert "--sizing equal-tokens" in source, "Experiment A must use equal-tokens"
+    assert "--target-l2-tokens" in source, "equal-tokens needs a token target"
+    assert '--workload reusable-prefixes' in source
+
+    # Repeats must alternate configs, or a monotonic drift in pod conditions
+    # would be attributed to the config rather than to time.
+    repeat_block = source[source.index("Experiment B repeats"):]
+    bf16_at = repeat_block.index("for cfg in bf16 int8")
+    assert bf16_at >= 0, "repeat sweep must alternate bf16 then int8"
+    assert "seq 1" in repeat_block
+
+    # HOST_SIZE must not be read from the environment inside the python heredoc;
+    # it is a plain shell variable and would silently fall back to the default.
+    assert 'os.environ.get("HOST_SIZE"' not in source, (
+        "HOST_SIZE must be interpolated, not read from os.environ"
+    )
+
+
+def test_reproduce_all_tells_the_user_to_copy_results_out():
+    """A pod with no volume loses everything on termination."""
+    source = _script("reproduce_all.sh").read_text()
+    assert "rsync" in source
+    assert "no volume" in source.lower()

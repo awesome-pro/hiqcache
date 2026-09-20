@@ -237,6 +237,25 @@ experimental path works and the remaining work is measurement, not engineering.
 
 ---
 
+## One-command reproduction
+
+Everything below is wrapped by `scripts/reproduce_all.sh`, in the order that
+matters (regression smoke tests first, then Experiment B, then repeats, then
+Experiment A at equal logical capacity, then quality):
+
+```bash
+cd /workspace/hiqcache
+bash scripts/reproduce_all.sh                # everything, ~50-70 min
+bash scripts/reproduce_all.sh --skip-repeats # faster first pass
+```
+
+It writes `results/provenance.txt` itself, alternates the order of the repeat
+sweep (so a drift in pod conditions cannot be mistaken for a config difference),
+and prints the rsync command for getting results off the pod.
+
+The individual steps are documented below for when something needs re-running in
+isolation.
+
 ## Step 5 — Experiment B (the headline result)
 
 Same physical CPU budget, workloads sized to sit *between* the two L2

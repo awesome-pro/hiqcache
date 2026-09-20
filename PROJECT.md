@@ -50,23 +50,33 @@ The SGLang fork contains the actual runtime modification.
 
 | Phase | Description | Where | Status |
 | --- | --- | --- | --- |
-| 0 | Repo scaffold + cross-device conformance harness | Mac | **done** |
-| 1 | Encoded representation (`layout.py`) | Mac | **done** |
-| 2 | Standalone codec + tests | Mac | **done** (CPU + MPS) |
-| 3 | Compressed host pool `mha_int8.py` | Mac (written) | **done**, needs pod to run |
-| 4 | GPU staging architecture | Mac (written) | **done**, needs pod to run |
-| 5 | D2H compression integration | Mac (written) | **done**, needs pod to run |
-| 6 | H2D restoration integration | Mac (written) | **done**, needs pod to run |
-| 7 | Stream semantics | Pod | tests written, not yet run |
-| 8 | Fail-fast configuration checks | Mac (written) | **done**, needs pod to run |
-| 9 | Experimental activation path | Mac (written) | **done** |
-| 10 | Unit + kernel-level validation | both | codec/staging/drift done locally; pool tests await the pod |
-| 11 | Real SGLang integration smoke | Pod | not started |
-| 12–20 | Benchmarks, quality, analysis, demo | Pod + Mac analysis | not started |
+| 0 | Repo scaffold + conformance harness | Mac | **done** |
+| 1 | Encoded representation | Mac | **done** |
+| 2 | Standalone codec + tests | Mac | **done** (CPU + MPS bit-identical) |
+| 3 | Compressed host pool `mha_int8.py` | Mac + pod | **done** |
+| 4 | GPU staging architecture | Mac + pod | **done** |
+| 5 | D2H compression integration | Mac + pod | **done** — 82,944.00 B/token measured |
+| 6 | H2D restoration integration | Mac + pod | **done** — restore verified |
+| 7 | Stream semantics | Pod | **done** — 36/36 pool tests |
+| 8 | Fail-fast configuration checks | Mac + pod | **done** |
+| 9 | Experimental activation path | Mac + pod | **done** |
+| 10 | Unit + kernel-level validation | both | **done** |
+| 11 | Real SGLang integration smoke | Pod | **done** |
+| 12 | Benchmark design | Mac | **done** |
+| 13 | Experiment B (same physical budget) | Pod | **done** — see `docs/experiment-b-results.md` |
+| 13 | Experiment A (same logical capacity) | Pod | outstanding |
+| 14 | Performance metrics | Pod | bytes/capacity done; codec phase timing instrumented, not collected |
+| 15 | Numerical/quality validation | Pod | harness written, **not run** |
+| 16 | Torch codec first | — | **done** (torch throughout) |
+| 17 | Triton only if profiling justifies | — | gated on the codec timing result |
+| 18 | Analyse without forcing a win | Mac | in progress |
+| 19 | Final project repository | Mac | in progress |
+| 20 | Demo | Mac | outstanding |
 
-Verified facts, kernel constraints and the local/pod capability split are recorded in
-`docs/verification-notes.md`. The fork source map and runtime contract are in
-`docs/sglang-integration.md`. Do not re-derive them from the trace doc alone.
+Measured provenance, the full results table and the explicit limitations live in
+`docs/experiment-b-results.md`. The SGLang SHA measured was
+`9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1`.
+
 
 ---
 

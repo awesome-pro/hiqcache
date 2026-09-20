@@ -67,6 +67,19 @@ class Config:
     host_size_gb: float = 8.0
 
 
+def _row_bytes(config_name: str) -> int:
+    """Encoded row width for a config: 1152 for int8, 2048 for bf16.
+
+    Derived from the same constants the pools use, so the equal-tokens sizing
+    cannot drift from the codec layout.
+    """
+    if config_name == "int8":
+        return V1_LAYOUT.row_bytes
+    # BF16: head_num * head_dim * itemsize, from the Qwen3-8B TP=1 geometry the
+    # INT8 format is defined against.
+    return 2 * V1_LAYOUT.payload_bytes
+
+
 def build_configs(
     model: str,
     host_size_gb: float,
@@ -75,6 +88,8 @@ def build_configs(
     max_total_tokens: int | None = None,
     sizing: str = "fixed-size",
     host_ratio: float = 2.0,
+    target_l2_tokens: int | None = None,
+    layer_num: int = 36,
 ) -> dict:
     """The three Phase 12 configurations, sharing every non-codec setting."""
     common = [
@@ -104,13 +119,37 @@ def build_configs(
         # measured: 21.8 GB backed up, 0 tokens ever restored.
         "--hicache-write-policy", "write_back",
     ]
-    if sizing == "ratio":
-        # Equal token capacity across configs: host_size = 0 leaves the pool to
-        # be sized as device_capacity * ratio. This is the only way to compare
-        # codec cost fairly, because --hicache-size gives INT8 1.78x the tokens.
+    if sizing == "equal-tokens":
+        # Experiment A. Equal LOGICAL capacity: both tiers hold the same number
+        # of L2 tokens, so any remaining difference is codec cost rather than the
+        # capacity the codec buys.
+        #
+        # Each config needs a DIFFERENT host budget to reach the same token
+        # count, because size_per_token differs (147,456 vs 82,944). So the size
+        # is computed per config below, not here.
+        #
+        # NOT via --hicache-ratio: that sizes the pool as
+        # device_capacity * ratio, which on a 48 GB card is millions of tokens.
+        # Nothing would ever be evicted and the experiment would measure nothing.
+        if not target_l2_tokens:
+            raise ValueError("--sizing equal-tokens requires --target-l2-tokens")
+    elif sizing == "ratio":
         hicache_common += ["--hicache-ratio", str(host_ratio)]
     else:
         hicache_common += ["--hicache-size", f"{host_size_gb:g}"]
+
+    def hicache_args(config_name: str) -> list:
+        """Per-config HiCache args, because host bytes differ by config."""
+        args = list(hicache_common)
+        if sizing == "equal-tokens":
+            # Mirror HostKVCache: size = int(host_size * 1e9 // size_per_token),
+            # so invert it -- host_size = tokens * size_per_token.
+            bytes_per_token = 2 * layer_num * _row_bytes(config_name)
+            args += [
+                "--hicache-size",
+                f"{target_l2_tokens * bytes_per_token / 1e9:.6f}",
+            ]
+        return args
     return {
         # A: no reusable L2 at all -> every L1 miss is a prefill recomputation.
         "baseline": Config(
@@ -125,7 +164,7 @@ def build_configs(
             name="bf16",
             label="B: standard HiCache, BF16 L2",
             env={"SGLANG_EXPERIMENTAL_HICACHE_INT8": "0"},
-            server_args=common + hicache_common,
+            server_args=common + hicache_args("bf16"),
             host_size_gb=host_size_gb,
         ),
         # C: HiQCache, compressed INT8 L2.
@@ -133,7 +172,7 @@ def build_configs(
             name="int8",
             label="C: HiQCache, compressed INT8 L2",
             env={"SGLANG_EXPERIMENTAL_HICACHE_INT8": "1"},
-            server_args=common + hicache_common,
+            server_args=common + hicache_args("int8"),
             host_size_gb=host_size_gb,
         ),
     }
@@ -373,7 +412,7 @@ def main() -> int:
     parser.add_argument("--host-size", type=float, default=8.0, help="decimal GB")
     parser.add_argument(
         "--sizing",
-        choices=["fixed-size", "ratio"],
+        choices=["fixed-size", "ratio", "equal-tokens"],
         default="fixed-size",
         help=(
             "fixed-size: --hicache-size, the SAME PHYSICAL budget for every "
@@ -398,6 +437,18 @@ def main() -> int:
     parser.add_argument("--page-size", type=int, default=1)
     parser.add_argument("--host-ratio", type=float, default=2.0,
                         help="host:device capacity ratio when --sizing ratio")
+    parser.add_argument(
+        "--target-l2-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Required by --sizing equal-tokens: the L2 token capacity both "
+            "configs should end up with. Each config's host bytes are computed "
+            "from its own size_per_token, so BF16 and INT8 cache the same number "
+            "of tokens -- which is what isolates codec cost from capacity gain. "
+            "Use the BF16 capacity for the budget in question (54,254 at 8 GB)."
+        ),
+    )
     parser.add_argument("--layer-num", type=int, default=36)
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--workload", default="small", choices=["small", "reusable-prefixes"])
@@ -443,6 +494,8 @@ def main() -> int:
         max_total_tokens=args.max_total_tokens,
         sizing=args.sizing,
         host_ratio=args.host_ratio,
+        target_l2_tokens=args.target_l2_tokens,
+        layer_num=args.layer_num,
     )[args.config]
     workload = build_workloads(args)[args.workload]
     budget = capacity_budget(args.host_size, args.layer_num) if args.host_size > 0 else {}

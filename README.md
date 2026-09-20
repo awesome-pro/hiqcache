@@ -18,22 +18,26 @@ L1 (GPU, BF16)             L2 (CPU, INT8 + BF16 scales)
 
 ## Status
 
-| Phase | Where | State |
-| --- | --- | --- |
-| Encoded representation (format, alignment) | Mac | **done** |
-| Standalone codec + tests | Mac (CPU + MPS) | **done** |
-| Cross-device conformance harness | Mac | **done** — CPU ≡ MPS bit-identical |
-| `MHATokenToKVPoolHostINT8` + dispatch + fail-fast | Mac (written, unit-tested) | **done** — needs pod to run |
-| GPU staging buffers + growth policy | Mac (unit-tested) | **done** |
-| Stream semantics + transfer roundtrip | GPU pod | **tests written, not yet run** |
-| Benchmarks, quality, analysis | GPU pod + Mac | not started |
+| Phase | State |
+| --- | --- |
+| 0–2 Encoded representation, codec, capacity maths | **done** — 311 tests, CPU + MPS bit-identical |
+| 3–9 `MHATokenToKVPoolHostINT8`, staging, dispatch, fail-fast | **done** — 36/36 pool tests pass on GPU |
+| 10 Kernel-level validation | **done** — JIT at 1152 B, `cudaHostRegister`, pointer-table move, H2D byte copy |
+| 11 Integration smoke | **done** — compressed L2 write *and* L2→L1 restore verified |
+| 12–13 Benchmarks | **Experiment B done**; Experiment A (equal logical capacity) outstanding |
+| 14 Metrics | bytes/capacity exact; codec phase timing instrumented, not yet collected |
+| 15 Quality | harness written, **not yet run** |
+| 16–17 Torch codec / Triton | torch throughout; Triton gated on the timing result |
+| 18–20 Analysis, repo, demo | in progress |
 
-223 tests pass locally with no GPU. The pool class parses and its logic is
-covered, but **the CUDA JIT kernels, pinned arena and stream ordering have not
-executed yet** — that is what the pod run is for.
+Measured on an RTX A6000 at SGLang `9a7ac7978f49`; full provenance and
+limitations in `docs/experiment-b-results.md`.
 
+**Read that document before quoting any number.** The capacity, byte and
+cache-hit figures are exact and deterministic. The latency and throughput
+figures are single runs and still need the repeats described there.
 
-## The format
+## The format## The format
 
 One aligned record per `(layer, K|V, token)` row:
 
@@ -124,7 +128,7 @@ Measured, on a Qwen3-8B-shaped 512-token batch:
 src/hiqcache/
   layout.py     byte arithmetic, alignment proofs, compression math
   codec.py      quantise / pack / unpack / dequantise + error accounting
-tests/          223 tests: layout, codec, capacity, device parity,
+tests/          311 tests: layout, codec, capacity, device parity,
                 fork codec, fork staging buffers, fork/reference drift guard
 scripts/
   conformance.py     cross-device digest harness (Mac ↔ pod)
@@ -161,7 +165,7 @@ Full source map, data flow and fail-fast matrix: `docs/sglang-integration.md`.
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python torch pytest numpy
 
-.venv/bin/python -m pytest tests/ -q          # 223 tests, no GPU
+.venv/bin/python -m pytest tests/ -q          # 311 tests, no GPU
 .venv/bin/python scripts/capacity_table.py --hicache-size 8
 .venv/bin/python scripts/conformance.py generate --device cpu
 ```
