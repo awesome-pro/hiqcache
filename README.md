@@ -194,6 +194,28 @@ seconds instead of after a failed multi-hour SGLang run. See `docs/pod-guide.md`
 
 ## Reproduce (GPU)
 
+**Starting from a completely empty pod?** Follow `docs/fresh-pod-guide.md` — it is
+the copy-pasteable version of everything below, with the image, timings and
+expected output at each step.
+
+Short form:
+
+```bash
+# 1. clone and run the gates (no SGLang needed)
+git clone https://github.com/awesome-pro/hiqcache.git && cd hiqcache
+bash scripts/pod_bootstrap.sh /workspace
+
+# 2. install SGLang (see the guide for why these flags)
+cd ../sglang
+SGLANG_BUILD_RUST_EXTS=none python -m pip install     --extra-index-url https://download.pytorch.org/whl/cu130 -e python
+
+# 3. verify, then measure
+cd ../hiqcache
+bash scripts/verify_sglang.sh
+```
+
+## Reproduce (GPU, details)
+
 See `docs/pod-guide.md` (step by step) and `docs/pod-runbook.md` (reference). Requires the SGLang fork at
 `515f5be77e74761c269e007ac41a5895191a1b7d`.
 
