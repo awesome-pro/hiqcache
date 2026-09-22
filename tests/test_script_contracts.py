@@ -243,3 +243,31 @@ def test_reproduce_all_tells_the_user_to_copy_results_out():
     source = _script("reproduce_all.sh").read_text()
     assert "rsync" in source
     assert "no volume" in source.lower()
+
+
+def test_verify_sglang_installs_what_the_slim_install_omits():
+    """The SGLang install skips [all] and [test], so pytest is absent.
+
+    Running the pool tests then fails with "No module named pytest", which is
+    what happened on the pod. The verify script installs it itself.
+    """
+    source = _script("verify_sglang.sh").read_text()
+    assert "import pytest" in source and "install --quiet pytest" in source, (
+        "verify_sglang.sh must ensure pytest is present"
+    )
+    # The pool tests are the gate; the measurement suite must come after them.
+    pool = source.index("test_hicache_int8_pool_host_unit.py")
+    measure = source.index("reproduce_all.sh")
+    assert pool < measure, "pool tests must gate the measurement suite"
+    assert "--tests-only" in source, "must be able to stop after the tests"
+
+
+def test_pod_bootstrap_installs_ninja():
+    """A fresh image has no ninja, and the JIT compile fails without it."""
+    source = _script("pod_bootstrap.sh").read_text()
+    assert "pip install --quiet ninja" in source, (
+        "pod_bootstrap.sh must install ninja; GATE 0 depends on it"
+    )
+    ninja = source.index("pip install --quiet ninja")
+    gate0 = source.index("GATE 0/4")
+    assert ninja < gate0, "ninja must be installed before GATE 0 runs"

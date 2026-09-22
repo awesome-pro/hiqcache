@@ -102,6 +102,16 @@ git -C hiqcache rev-parse HEAD > provenance/hiqcache_sha.txt
 # the compiled HiCache kernels can work at all: can this box JIT-compile a CUDA
 # extension? A missing ninja or CUDA header otherwise surfaces much later as a
 # generic "needs the JIT HiCache kernel" error that looks like a HiCache bug.
+# --------------------------------------------------------- build essentials
+# On a fresh pod this is the difference between GATE 0 passing and failing. The
+# HiCache kernels are JIT-compiled through torch.utils.cpp_extension, which shells
+# out to ninja; a fresh image does not ship it, and the resulting failure surfaces
+# much later as a generic "needs the JIT HiCache kernel" error.
+if ! command -v ninja >/dev/null 2>&1 && ! python -c "import ninja" >/dev/null 2>&1; then
+  say "Installing ninja (required to JIT-compile the HiCache kernels)"
+  python -m pip install --quiet ninja 2>&1 | tail -3 || true
+fi
+
 say "GATE 0/4: environment probe (JIT compile capability)"
 # Resolve the probe by absolute path. This script clones into $WORKSPACE and
 # therefore cds there, so a relative "scripts/env_probe.py" would not resolve --
