@@ -64,7 +64,7 @@ The SGLang fork contains the actual runtime modification.
 | 11 | Real SGLang integration smoke | Pod | **done** |
 | 12 | Benchmark design | Mac | **done** |
 | 13 | Experiment B (same physical budget) | Pod | **done** — see `docs/experiment-b-results.md` |
-| 13 | Experiment A (same logical capacity) | Pod | outstanding |
+| 13 | Experiment A (same logical capacity) | Pod | **done** — 8.000 → 4.500 GB for the same 54,254 tokens, hit rate unchanged; `docs/experiment-a-results.md` |
 | 14 | Performance metrics | Pod | bytes/capacity done; codec phase timing instrumented, not collected |
 | 15 | Numerical/quality validation | Pod | harness written, **not run** |
 | 16 | Torch codec first | — | **done** (torch throughout) |

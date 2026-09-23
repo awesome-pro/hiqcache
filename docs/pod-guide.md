@@ -372,7 +372,7 @@ python scripts/analyse.py results/       # once written
 - [ ] smoke test PASS with `int8` reporting **82,944 B/token** in L2
 - [ ] baseline `bf16` control reports 147,456 B/token
 - [ ] Experiment B: int8 avoids recomputation where bf16 cannot
-- [ ] Experiment A: codec overhead quantified at equal logical capacity
+- [x] Experiment A: codec overhead quantified at equal logical capacity
 - [ ] quality: logprob deltas and generation agreement measured
 - [ ] all results JSON + provenance committed to the `hiqcache` repo
 

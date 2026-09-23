@@ -24,7 +24,7 @@ L1 (GPU, BF16)             L2 (CPU, INT8 + BF16 scales)
 | 3–9 `MHATokenToKVPoolHostINT8`, staging, dispatch, fail-fast | **done** — 36/36 pool tests pass on GPU |
 | 10 Kernel-level validation | **done** — JIT at 1152 B, `cudaHostRegister`, pointer-table move, H2D byte copy |
 | 11 Integration smoke | **done** — compressed L2 write *and* L2→L1 restore verified |
-| 12–13 Benchmarks | **Experiment B done**; Experiment A (equal logical capacity) outstanding |
+| 12–13 Benchmarks | **Experiments A and B done** — `docs/experiment-a-results.md`, `docs/experiment-b-results.md` |
 | 14 Metrics | bytes/capacity exact; codec phase timing instrumented, not yet collected |
 | 15 Quality | harness written, **not yet run** |
 | 16–17 Torch codec / Triton | torch throughout; Triton gated on the timing result |
@@ -89,6 +89,28 @@ reports 54,254 and 96,451 (the values the layout predicts), and backup bytes
 divided by backup tokens is 147,456.00 and **82,944.00** respectively. The
 latency and throughput deltas are **single runs and still need repeats** --
 see `docs/experiment-b-results.md` for the full table and the limitations.
+
+### Experiment A — equal logical capacity
+
+Both tiers pinned to the same **54,254** L2 tokens, so the comparison is bytes
+rather than capacity:
+
+| | BF16 | **INT8** |
+| --- | --- | --- |
+| L2 bytes for 54,254 tokens | 8.000 GB | **4.500 GB** |
+| measured bytes/token | 147,456 | **82,944** |
+| cache hit rate | 97.03% | **96.94%** |
+| L2 evictions | 0 | 0 |
+
+**The same logical cache in 56.25% of the memory — 1.7778× denser — with the hit
+rate unchanged to within −0.09 points.**
+
+Equal hit rate is the *expected* result, because capacity is equal by
+construction. That is what makes it evidence: it removes the confound in
+Experiment B, where the hit-rate gain could have been attributed to capacity, and
+shows the codec costs nothing in cache effectiveness. Both configs verified
+`target == achieved == 54,254` against the pool's own gauge. Full record:
+`docs/experiment-a-results.md`.
 
 ## Accuracy
 

@@ -144,8 +144,10 @@ than reporting a constant.
    acks, so the duration histograms stayed empty. Byte and token volumes are
    unaffected. Enabling timing is required before quoting codec overhead.
 
-4. **`--hicache-ratio` was not exercised.** Only fixed `--hicache-size`.
-   Experiment A (equal logical capacity) is still outstanding.
+4. **`--hicache-ratio` was not exercised in *this* experiment.** Only fixed
+   `--hicache-size`. Experiment A has since been run at equal logical capacity and
+   does use the ratio knob: `docs/experiment-a-results.md` reports 8.000 -> 4.500 GB
+   for the same 54,254 tokens with the hit rate unchanged to within −0.09 points.
 
 5. **One workload shape.** 65,536 reusable tokens at concurrency 8. The
    crossover point where INT8 stops helping (workload exceeding the INT8 L2) is
