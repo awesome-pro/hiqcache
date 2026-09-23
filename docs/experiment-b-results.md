@@ -3,7 +3,7 @@
 **Same physical CPU-memory budget (`--hicache-size 8`), same GPU, same SGLang SHA,
 same workload.** Three configurations, one run each.
 
-Hardware: NVIDIA RTX A6000 48 GB, 62 GB RAM. SGLang `9a7ac7978f49` on
+Hardware: NVIDIA RTX A6000 48 GB, 62 GB RAM. SGLang `3bb2ef6602` on
 `hiqcache/int8-l2`. Workload: 32 shared-prefix groups x 2048 tokens = 65,536
 reusable prefix tokens, 128 prompts, concurrency 8. L1 capped at 16,384 tokens.
 
@@ -22,17 +22,53 @@ Every number below is reproduced from the raw JSON and server logs under
 | image | `runpod/pytorch:1.4.0-rc.164-cu1300-torch2130-ubuntu2404` |
 | torch | 2.14.0+cu130 (codec venv); 2.13.0+cu130 (server, matching SGLang's pin) |
 | host | Linux 6.8.0-139-generic x86_64, 62 GB RAM, 16 vCPU |
-| **SGLang SHA measured** | **`9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1`** |
+| **SGLang SHA measured** | **`3bb2ef6602c12c102699f39830c80fa6cc2768d8`** |
 | branch | `hiqcache/int8-l2` |
-| hiqcache SHA | `3bbe653` |
+| hiqcache SHA | `9b9a48d` |
+
+### Commit-identity rewrite — the SHAs above are post-rewrite
+
+Every commit in this repository and on the fork branch was originally authored as
+`HiQCache <dev@hiqcache.local>`, an address tied to no GitHub account. GitHub
+therefore reported every commit as **Unverified** (`reason: no_user`) and
+attributed none of them to an account.
+
+The history was rewritten to `Abhinandan <abhinandanverma551@gmail.com>` and
+re-signed with the SSH signing key registered on GitHub. GitHub now reports
+`verified: true`, `reason: valid`.
+
+The rewrite changed **commit hashes only**: every tree, author/committer timestamp
+and commit message is byte-identical, the branch still descends from the same
+pinned base (`515f5be77e74`), and the diff against upstream is unchanged. These
+results therefore describe exactly the same code as before the rewrite. Old -> new
+for the SHAs cited in this repository:
+
+| old | new | subject |
+| --- | --- | --- |
+| `9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1` | `3bb2ef6602c12c102699f39830c80fa6cc2768d8` | Add a match-walk diagnostic for host_hit_length |
+| `ecb6278a0a` | `d9e443502643c1dbff5ae86171459991f474984c` | Match-walk diagnostic: also report is_write_back |
+| `38e366694d` | `26e6d78dba14ffb3191a3cad6dfe2e08a1002ea6` | Add per-phase codec timing to the INT8 pool |
+| `e554c653bc` | `bc32b24bf84a3034f500873cce0a6d11b2ca8631` | Phase 3-9: INT8 compressed HiCache L2 host pool |
+
+The exact measured object stays fetchable in the fork, so the measurement can still
+be audited against the byte-identical original:
+
+```bash
+git -C sglang fetch origin tag measured-exp-b
+git -C sglang log -1 measured-exp-b     # 9a7ac7978f49, the commit actually measured
+```
+
+`results/*.json` still record `"sglang_sha": "9a7ac7978f49..."`. That is the value
+the server itself reported at measurement time, and raw output is deliberately
+**not** edited; resolve it through the tag above.
 
 ### The fork has advanced since these measurements
 
 Two commits landed after the measured SHA:
 
 ```
-38e366694d  Add per-phase codec timing to the INT8 pool
-ecb6278a0a  Match-walk diagnostic: also report is_write_back
+26e6d78dba  Add per-phase codec timing to the INT8 pool
+d9e4435026  Match-walk diagnostic: also report is_write_back
 ```
 
 **They do not affect these results.** Both add opt-in instrumentation only: the

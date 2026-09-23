@@ -75,7 +75,9 @@ The SGLang fork contains the actual runtime modification.
 
 Measured provenance, the full results table and the explicit limitations live in
 `docs/experiment-b-results.md`. The SGLang SHA measured was
-`9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1`.
+`3bb2ef6602c12c102699f39830c80fa6cc2768d8` (post identity-rewrite; the original
+`9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1` is preserved by the fork tag
+`measured-exp-b` — see the rewrite note in that document).
 
 
 ---

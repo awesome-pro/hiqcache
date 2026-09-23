@@ -42,7 +42,7 @@ git checkout main
 
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python torch pytest numpy
-.venv/bin/python -m pytest tests/ -q            # expect 223 passed, no GPU needed
+.venv/bin/python -m pytest tests/ -q            # expect 315 passed, no GPU needed
 ```
 
 Clone the SGLang fork with the implementation:
@@ -51,7 +51,7 @@ Clone the SGLang fork with the implementation:
 git clone https://github.com/awesome-pro/sglang.git
 cd sglang
 git checkout hiqcache/int8-l2
-git rev-parse HEAD        # e554c653bc..., on top of the pinned base
+git rev-parse HEAD        # bc32b24bf8..., on top of the pinned base
 git merge-base --is-ancestor 515f5be77e74761c269e007ac41a5895191a1b7d HEAD \
   && echo "base commit is an ancestor: OK"
 ```

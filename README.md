@@ -20,7 +20,7 @@ L1 (GPU, BF16)             L2 (CPU, INT8 + BF16 scales)
 
 | Phase | State |
 | --- | --- |
-| 0–2 Encoded representation, codec, capacity maths | **done** — 311 tests, CPU + MPS bit-identical |
+| 0–2 Encoded representation, codec, capacity maths | **done** — 315 tests, CPU + MPS bit-identical |
 | 3–9 `MHATokenToKVPoolHostINT8`, staging, dispatch, fail-fast | **done** — 36/36 pool tests pass on GPU |
 | 10 Kernel-level validation | **done** — JIT at 1152 B, `cudaHostRegister`, pointer-table move, H2D byte copy |
 | 11 Integration smoke | **done** — compressed L2 write *and* L2→L1 restore verified |
@@ -30,14 +30,14 @@ L1 (GPU, BF16)             L2 (CPU, INT8 + BF16 scales)
 | 16–17 Torch codec / Triton | torch throughout; Triton gated on the timing result |
 | 18–20 Analysis, repo, demo | in progress |
 
-Measured on an RTX A6000 at SGLang `9a7ac7978f49`; full provenance and
+Measured on an RTX A6000 at SGLang `3bb2ef6602`; full provenance and
 limitations in `docs/experiment-b-results.md`.
 
 **Read that document before quoting any number.** The capacity, byte and
 cache-hit figures are exact and deterministic. The latency and throughput
 figures are single runs and still need the repeats described there.
 
-## The format## The format
+## The format
 
 One aligned record per `(layer, K|V, token)` row:
 
@@ -68,7 +68,7 @@ as an opaque payload/geometry mismatch. TP-sharded record formats are future wor
 
 ## Results
 
-Qwen3-8B, 1x RTX A6000 48 GB, SGLang `9a7ac7978f49`, same physical CPU budget
+Qwen3-8B, 1x RTX A6000 48 GB, SGLang `3bb2ef6602`, same physical CPU budget
 (`--hicache-size 8`) for both cache tiers. Workload: 32 shared-prefix groups x
 2048 tokens = 65,536 reusable prefix tokens.
 
@@ -128,7 +128,7 @@ Measured, on a Qwen3-8B-shaped 512-token batch:
 src/hiqcache/
   layout.py     byte arithmetic, alignment proofs, compression math
   codec.py      quantise / pack / unpack / dequantise + error accounting
-tests/          311 tests: layout, codec, capacity, device parity,
+tests/          315 tests: layout, codec, capacity, device parity,
                 fork codec, fork staging buffers, fork/reference drift guard
 scripts/
   conformance.py     cross-device digest harness (Mac ↔ pod)
@@ -165,7 +165,7 @@ Full source map, data flow and fail-fast matrix: `docs/sglang-integration.md`.
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python torch pytest numpy
 
-.venv/bin/python -m pytest tests/ -q          # 311 tests, no GPU
+.venv/bin/python -m pytest tests/ -q          # 315 tests, no GPU
 .venv/bin/python scripts/capacity_table.py --hicache-size 8
 .venv/bin/python scripts/conformance.py generate --device cpu
 ```

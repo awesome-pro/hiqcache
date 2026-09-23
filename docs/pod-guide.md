@@ -82,7 +82,7 @@ isolated codec venv, and runs **four gates**:
 | Gate | Proves | Expected |
 | --- | --- | --- |
 | 0 | environment can JIT-compile CUDA (`scripts/env_probe.py`) | `this box can run the HiCache JIT path` |
-| 1 | local suite green on the pod | `223 passed` |
+| 1 | local suite green on the pod | `315 passed` |
 | 2 | preflight | `all blocking checks passed` |
 | 3 | **codec conformance on CUDA** | `PASS: codec is bit-identical to the reference device` |
 
