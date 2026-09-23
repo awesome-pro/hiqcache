@@ -122,33 +122,46 @@ def build_configs(
     if sizing == "equal-tokens":
         # Experiment A. Equal LOGICAL capacity: both tiers hold the same number
         # of L2 tokens, so any remaining difference is codec cost rather than the
-        # capacity the codec buys.
+        # capacity the codec buys. INT8 reaching that capacity in ~56% of the
+        # bytes is the end-to-end claim.
         #
-        # Each config needs a DIFFERENT host budget to reach the same token
-        # count, because size_per_token differs (147,456 vs 82,944). So the size
-        # is computed per config below, not here.
+        # Sized with --hicache-ratio, NOT --hicache-size. Two independent
+        # reasons, both load-bearing:
         #
-        # NOT via --hicache-ratio: that sizes the pool as
-        # device_capacity * ratio, which on a 48 GB card is millions of tokens.
-        # Nothing would ever be evicted and the experiment would measure nothing.
+        #   * hicache_size is declared `int` (arg_groups/fields/memory.py:
+        #     `hicache_size: A[int, ...]`, "in gigabytes"). Equal token capacity
+        #     needs sub-GB precision -- BF16 needs 8.000078 GB -- so argparse
+        #     rejects the value and the server exits with code 2 before it ever
+        #     loads the model. That is not a crash to debug; it is an
+        #     unrepresentable argument.
+        #   * hicache_ratio is a *token* ratio (pool_host/base.py:
+        #     `self.size = int(device_capacity * host_to_device_ratio)`), then
+        #     rounded up a page (`page_num = size // page_size + 1`). With
+        #     --page-size 1 that lands on `int(device*ratio) + 1` tokens, hence
+        #     the -0.5 that makes the floor one below the target.
+        #
+        # A device pool pinned by --max-total-tokens is what makes the ratio
+        # exact, and the achieved capacity is checked against the pool's own
+        # gauge after startup rather than trusted.
         if not target_l2_tokens:
             raise ValueError("--sizing equal-tokens requires --target-l2-tokens")
+        if not max_total_tokens:
+            raise ValueError(
+                "--sizing equal-tokens requires --max-total-tokens: the host pool "
+                "is sized as a ratio of the device pool, so the device pool has "
+                "to be pinned to a known token count."
+            )
     elif sizing == "ratio":
         hicache_common += ["--hicache-ratio", str(host_ratio)]
     else:
         hicache_common += ["--hicache-size", f"{host_size_gb:g}"]
 
     def hicache_args(config_name: str) -> list:
-        """Per-config HiCache args, because host bytes differ by config."""
+        """Per-config HiCache args, because the host pool is per-config."""
         args = list(hicache_common)
         if sizing == "equal-tokens":
-            # Mirror HostKVCache: size = int(host_size * 1e9 // size_per_token),
-            # so invert it -- host_size = tokens * size_per_token.
-            bytes_per_token = 2 * layer_num * _row_bytes(config_name)
-            args += [
-                "--hicache-size",
-                f"{target_l2_tokens * bytes_per_token / 1e9:.6f}",
-            ]
+            ratio = (target_l2_tokens - 0.5) / max_total_tokens
+            args += ["--hicache-ratio", f"{ratio:.12f}"]
         return args
     return {
         # A: no reusable L2 at all -> every L1 miss is a prefill recomputation.
@@ -320,9 +333,18 @@ def wait_for_server(base_url: str, timeout_s: float, proc: subprocess.Popen) -> 
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if proc.poll() is not None:
+            # Print the LOG, not just the command. The previous version pointed
+            # at proc.args, which is the argv the caller already knows; the
+            # reason the server died is only ever in its log (an argparse
+            # rejection, an OOM, a busy port), so quote it here instead of
+            # making the operator go and find it.
+            log = getattr(proc, "_hiqcache_log_path", None)
+            tail = _tail(log, 25) if log else "(log path unknown)"
             raise RuntimeError(
-                f"server exited during startup with code {proc.returncode}; "
-                f"check {proc.args}"
+                f"server exited during startup with code {proc.returncode}.\n"
+                f"--- last 25 lines of {log} ---\n{tail}\n"
+                f"--- end of log ---\n"
+                f"command: {' '.join(proc.args)}"
             )
         try:
             http_get(f"{base_url}/health", timeout=5)
@@ -520,7 +542,12 @@ def main() -> int:
             wb = workload_budget(args, budget)
             print(f"workload : {wb['reusable_prefix_tokens']:,} reusable prefix "
                   f"tokens | L1 cap {wb['l1_capacity_cap']:,}")
-            print(f"verdict  : {wb['verdict']}")
+            if args.sizing == "equal-tokens":
+                print(f"verdict  : equal tokens by construction "
+                      f"({args.target_l2_tokens:,} in both tiers); the comparison "
+                      f"is the bytes each tier needs, not the hit rate")
+            else:
+                print(f"verdict  : {wb['verdict']}")
         return 0
 
     if not (sglang_root / "python" / "sglang").is_dir():
@@ -549,7 +576,14 @@ def main() -> int:
 
     print(f"=== {config.label}")
     print(f"=== workload: {workload.name} -- {workload.description}")
-    if budget:
+    if budget and args.sizing == "equal-tokens":
+        # The fixed-size budget below describes Experiment B. Printing it here
+        # would mislabel what this run actually does: under equal-tokens BOTH
+        # tiers are pinned to the same token count, and INT8 gets by on ~56% of
+        # the bytes.
+        print(f"=== L2 capacity target: {args.target_l2_tokens:,} tokens in BOTH "
+              f"tiers (equal logical capacity, different bytes)")
+    elif budget:
         print(f"=== L2 budget @ {args.host_size:g} GB: "
               f"bf16 {budget['bf16']['token_capacity']:,} tokens | "
               f"int8 {budget['int8']['token_capacity']:,} tokens "
@@ -559,7 +593,12 @@ def main() -> int:
         wb = workload_budget(args, budget)
         print(f"=== workload budget: {wb['reusable_prefix_tokens']:,} reusable "
               f"prefix tokens | L1 cap {wb['l1_capacity_cap']:,}")
-        print(f"=== {wb['verdict']}")
+        if args.sizing == "equal-tokens":
+            print("=== both tiers hold the same capacity by construction, so equal "
+                  "hit rates are the EXPECTED result; the measured difference is "
+                  "the memory each tier needs to hold them")
+        else:
+            print(f"=== {wb['verdict']}")
 
     with open(server_log, "w") as log:
         proc = subprocess.Popen(
@@ -594,6 +633,24 @@ def main() -> int:
         result["metrics_absolute_before"] = {
             k: before.get(k, 0.0) for k in TRACKED
         }
+
+        # Equal-tokens sizing is pure arithmetic (device_capacity * ratio, then
+        # rounded up to a page). Off by one token and the experiment quietly
+        # measures a capacity other than the one it claims, so check it against
+        # the pool's own gauge instead of trusting the formula.
+        if args.sizing == "equal-tokens":
+            achieved = int(before.get("sglang:hicache_host_total_tokens", 0.0))
+            result["target_l2_tokens"] = args.target_l2_tokens
+            result["achieved_l2_tokens"] = achieved
+            if achieved != int(args.target_l2_tokens):
+                raise RuntimeError(
+                    f"equal-tokens sizing missed: asked for "
+                    f"{args.target_l2_tokens:,} L2 tokens, the pool reports "
+                    f"{achieved:,}. The ratio assumed a device pool of "
+                    f"{args.max_total_tokens:,} tokens; check --max-total-tokens."
+                )
+            print(f"=== L2 capacity verified against the pool's gauge: "
+                  f"{achieved:,} tokens")
 
         # Flush the prefix cache so the measured phase starts cold; otherwise a
         # previous run's L1/L2 state leaks in and the hit rate is meaningless.
@@ -686,16 +743,35 @@ def _terminate(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
         return
     try:
         proc.wait(timeout=30)
+        return
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        pass
+    # SIGTERM was not enough -- unpinning a multi-GB host pool can stall teardown
+    # for tens of seconds. Escalate, but WAIT for the kill to actually land:
+    # returning immediately leaves the process tree holding the port, the GPU and
+    # up to --hicache-size GB of pinned host memory, so the NEXT config's server
+    # fails at startup for a reason that looks unrelated to this one.
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        print(
+            f"=== WARNING: process group {pgid} survived SIGKILL for 60s; "
+            f"the next server may fail to bind its port",
+            file=sys.stderr,
+        )
 
 
 def _git_sha(root: Path) -> str:
