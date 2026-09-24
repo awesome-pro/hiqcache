@@ -304,41 +304,60 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         for prompt in prompts_to_send:
             post_generate(base_url, prompt, max_new_tokens=2, logprob=False)
 
-        # 2. overflow L1 with DISTINCT filler.
-        #    The filler has to add tokens L1 has never seen. The first version
-        #    reused one shared prefix for every filler request, so each added
-        #    only a handful of new tokens and never came near the L1 cap: nothing
-        #    was ever evicted, and the run compared two cold prefills. Size the
-        #    filler above L1 (so the measured prompts are demoted) and below L2
-        #    (so they survive there long enough to be restored).
+        # 2. overflow L1 with DISTINCT filler, sized from the SERVER's own token
+        #    accounting rather than a words-to-tokens guess.
+        #    Both earlier attempts failed on sizing. The first reused one shared
+        #    prefix, so it added almost nothing and never approached the L1 cap.
+        #    The second guessed ~1.3 tokens per synthetic word; these tokenize to
+        #    several tokens each, so the filler came out ~3x over target, flooded
+        #    L2 as well, and pushed the measured prompts out of it -- still 0
+        #    restores, for the opposite reason.
+        #    The window is narrow and must be hit exactly: enough filler to evict
+        #    the measured prompts from L1 into L2, not enough to evict them from
+        #    L2 as well. meta_info.prompt_tokens is the ground truth for volume.
         cap = scrape_metrics(base_url)
         l1_cap = float(args.max_total_tokens or 0)
         l2_cap = float(cap.get("sglang:hicache_host_total_tokens", 0.0))
-        target_tokens = (l1_cap + l2_cap) / 2 if l2_cap > l1_cap else l1_cap * 1.3
-        # ~1.3 tokens per word for these short synthetic words; the restore
-        # assertion below is what actually holds this honest.
-        words_total = max(200, int(target_tokens / 1.3))
-        per_request = max(40, words_total // max(1, args.filler_requests))
-        report["filler"] = {
-            "l1_cap_tokens": l1_cap,
-            "l2_cap_tokens": l2_cap,
-            "target_tokens": target_tokens,
-            "words_per_request": per_request,
-        }
-        print(f"    filler: {args.filler_requests} x {per_request:,} distinct words "
-              f"(target {target_tokens:,.0f} tokens between L1 {l1_cap:,.0f} and "
-              f"L2 {l2_cap:,.0f})")
+        if l2_cap > l1_cap:
+            stop_at = l1_cap + 0.35 * (l2_cap - l1_cap)
+        else:
+            stop_at = l1_cap * 1.2
+        per_request = max(20, args.filler_words)
+        sent_tokens = 0
+        requests_sent = 0
         for i in range(args.filler_requests):
             body = " ".join(f"f{i}w{j}" for j in range(per_request))
             try:
-                post_generate(
+                payload = post_generate(
                     base_url,
                     f"{body}\n\nQ: reply OK\n\nAnswer:",
                     max_new_tokens=1,
                     logprob=False,
                 )
             except Exception:  # noqa: BLE001
-                pass
+                continue
+            requests_sent = i + 1
+            meta = payload.get("meta_info") or {}
+            sent_tokens += int(meta.get("prompt_tokens") or 0)
+            if sent_tokens >= stop_at:
+                break
+        report["filler"] = {
+            "l1_cap_tokens": l1_cap,
+            "l2_cap_tokens": l2_cap,
+            "stop_at_tokens": stop_at,
+            "sent_tokens": sent_tokens,
+            "requests_sent": requests_sent,
+            "words_per_request": per_request,
+        }
+        print(f"    filler: {requests_sent} requests, {sent_tokens:,} prompt "
+              f"tokens, stopped at {stop_at:,.0f} (L1 {l1_cap:,.0f} -> L2 "
+              f"{l2_cap:,.0f})")
+        if sent_tokens < l1_cap:
+            raise RuntimeError(
+                f"filler only reached {sent_tokens:,} tokens against an L1 cap of "
+                f"{l1_cap:,.0f}: nothing was evicted, so the re-sent prompts would "
+                f"come from L1. Raise --filler-requests."
+            )
 
         # 3. /flush_cache is deliberately NOT called. It flushes the radix cache,
         #    and if that reaches the host tier it deletes the very L2 state this
