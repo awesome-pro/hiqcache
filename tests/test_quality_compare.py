@@ -19,9 +19,11 @@ sys.path.insert(0, str(SCRIPTS))
 
 from quality_compare import (  # noqa: E402
     build_prompt,
+    build_prompts,
     compare,
     extract_chosen_logprobs,
     extract_output_ids,
+    shared_preamble,
 )
 
 
@@ -150,3 +152,29 @@ def test_real_capture_gives_the_guard_a_nonzero_denominator():
     a = [_gen([1, 2, 3], [])]
     b = [_gen([1, 2, 3], [])]
     assert compare(a, b)["tokens_compared"] == 3
+
+
+# ------------------------------------------------- shared-preamble regression
+# A preamble of ~3,500 tokens silently became ~25 because two code paths built
+# the prompt list and one of them dropped it. The symptom was "shared prefix:
+# ~25 tokens per prompt" followed by 0 restores, with nothing obviously wrong.
+
+
+def test_prompts_carry_the_shared_preamble():
+    ps = build_prompts(20, 300)
+    assert len(ps) == 20
+    assert all(p.startswith(shared_preamble(300)) for p in ps)
+    assert len(ps[0].split()) > 2000, "the preamble must dominate the prompt"
+
+
+def test_preamble_is_deterministic_and_identical_for_every_prompt():
+    """Both configs and every prompt must share byte-identical prefix text."""
+    ps = build_prompts(5, 50)
+    assert ps[0].startswith(shared_preamble(50))
+    prefix = shared_preamble(50)
+    assert ps[0][: len(prefix)] == ps[4][: len(prefix)]
+
+
+def test_prompts_still_differ_in_their_question():
+    ps = build_prompts(5, 20)
+    assert len({p for p in ps}) == 5

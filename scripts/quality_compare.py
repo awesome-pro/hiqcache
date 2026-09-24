@@ -94,6 +94,22 @@ def shared_preamble(repeats: int) -> str:
     )
 
 
+def build_prompts(count: int, prefix_repeats: int) -> list[str]:
+    """The measured prompts: one long shared preamble plus a distinct question.
+
+    Built in exactly one place on purpose. An earlier version built them here for
+    sending and again inside run_config for populating, and the second copy
+    dropped the preamble -- so a 3,500-token prefix silently became ~25 tokens
+    and nothing was ever large enough to demote into L2. Two builders for the
+    same list is the bug; there is now one.
+    """
+    preamble = shared_preamble(prefix_repeats)
+    return [
+        preamble + "\n\n" + build_prompt("general knowledge", q)
+        for q, _ in FACTS[:count]
+    ]
+
+
 def post_generate(
     base_url: str,
     prompt: str,
@@ -204,6 +220,11 @@ def generate_all(
                 "text": payload.get("text", ""),
                 "token_ids": extract_output_ids(payload),
                 "logprobs": extract_chosen_logprobs(payload),
+                # How much of this prompt the server matched in the radix cache.
+                # This is the number that separates "matched in L1, so no restore
+                # was needed" from "matched nothing, the nodes are gone" -- two
+                # opposite faults that both show up as load_back == 0.
+                "cached_tokens": int((payload.get("meta_info") or {}).get("cached_tokens") or 0),
             }
         )
     return results
@@ -318,9 +339,14 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         #    the radix tree and can later be demoted to L2. The first response's
         #    prompt_tokens is the server's own measure of how large that shared
         #    prefix really is -- the filler sizing below depends on it.
-        prompts_to_send = [
-            build_prompt("general knowledge", q) for q, _ in FACTS[: args.prompts]
-        ]
+        #
+        #    Use the prompts we were GIVEN. An earlier version rebuilt them here
+        #    from FACTS, which silently dropped the shared preamble main()
+        #    prepends -- the run then logged "shared prefix: ~25 tokens per
+        #    prompt" (a 300-repeat preamble is ~3,500) and had nothing large
+        #    enough to demote or restore. The bug was invisible because both
+        #    paths produced plausible-looking prompts.
+        prompts_to_send = list(prompts)
         prefix_tokens = 0.0
         for idx, prompt in enumerate(prompts_to_send):
             payload = post_generate(base_url, prompt, max_new_tokens=2, logprob=False)
@@ -420,18 +446,33 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         metrics = scrape_metrics(base_url)
         report["load_back_tokens"] = metrics.get("sglang:load_back_tokens_total", 0.0)
         report["backup_tokens"] = metrics.get("sglang:hicache_backup_tokens_total", 0.0)
-        print(f"    L2 restores: {report['load_back_tokens']:,.0f} tokens")
+        # The cache matched on the re-send is the missing half of the picture:
+        # load_back == 0 on its own cannot tell "served from L1" apart from
+        # "matched nothing and prefilled from scratch".
+        cached_total = sum(g.get("cached_tokens", 0) for g in report["generations"])
+        report["reused_prefix_tokens"] = cached_total
+        print(f"    re-send matched {cached_total:,} cached prompt tokens; "
+              f"L2 supplied {report['load_back_tokens']:,.0f}")
 
         # Refuse to report agreement from a run that never touched L2. Without
         # this the harness will happily compare two identical cold prefills and
         # print a perfect score, which is the most misleading output it could
         # produce: it looks like the codec was validated when it never ran.
         if report["load_back_tokens"] <= 0:
+            if cached_total > 0:
+                why = (
+                    f"the re-sent prompts still matched {cached_total:,} tokens, "
+                    f"so they were served from L1 and nothing needed restoring -- "
+                    f"the filler did not evict the prefix"
+                )
+            else:
+                why = (
+                    "the re-sent prompts matched nothing at all, so their nodes "
+                    "were evicted from L1 and are no longer in L2 either"
+                )
             raise RuntimeError(
-                f"no L2 restores for {tag}: the re-sent prompts came from L1 "
-                f"(filler too small) or the prefix never reached L2. Any "
-                f"agreement figure here would describe two cold prefills, not "
-                f"the codec."
+                f"no L2 restores for {tag}: {why}. Any agreement figure here "
+                f"would describe two cold prefills, not the codec."
             )
     finally:
         if proc.poll() is None:
@@ -476,11 +517,7 @@ def main() -> int:
     configs = build_configs(
         args.model, args.host_size, 1, 1, max_total_tokens=args.max_total_tokens
     )
-    preamble = shared_preamble(args.prefix_repeats)
-    prompts = [
-        preamble + "\n\n" + build_prompt("general knowledge", q)
-        for q, _ in FACTS[: args.prompts]
-    ]
+    prompts = build_prompts(args.prompts, args.prefix_repeats)
 
     bf16 = run_config(args, configs["bf16"], prompts, tag="bf16")
     int8 = run_config(args, configs["int8"], prompts, tag="int8")
