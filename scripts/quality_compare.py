@@ -134,17 +134,57 @@ def extract_chosen_logprobs(payload: dict) -> list[float]:
     return out
 
 
-def generate_all(url: str, prompts: list[str], *, max_new_tokens: int) -> list[dict]:
+def extract_output_ids(payload: dict) -> list[int]:
+    """Generated token ids, wherever this build happens to put them.
+
+    SGLang has moved this field around: ``/generate`` may report it top-level, or
+    inside ``meta_info``, or not at all -- ``return_output_ids`` applies to the
+    OpenAI chat endpoint, not here. The chosen-token logprobs carry the id as
+    their middle element (``[logprob, token_id, text]``), so fall back to those
+    instead of silently returning nothing.
+
+    This matters more than it looks. The first real run of this harness read only
+    ``meta_info.output_ids``, got an empty list for every prompt, and went on to
+    report "100% full-sequence agreement" -- which is exactly what ``[] == []``
+    scores. An empty capture must never again read as a perfect match.
+    """
+    meta = payload.get("meta_info") or {}
+    for candidate in (payload.get("output_ids"), meta.get("output_ids")):
+        if candidate:
+            return [int(i) for i in candidate]
+    ids: list[int] = []
+    for entry in meta.get("output_token_logprobs") or []:
+        if isinstance(entry, (list, tuple)) and len(entry) > 1:
+            try:
+                ids.append(int(entry[1]))
+            except (TypeError, ValueError):
+                continue
+    return ids
+
+
+def generate_all(
+    url: str,
+    prompts: list[str],
+    *,
+    max_new_tokens: int,
+    raw_dump: Path | None = None,
+) -> list[dict]:
     results = []
-    for prompt in prompts:
+    for idx, prompt in enumerate(prompts):
         payload = post_generate(
             url, prompt, max_new_tokens=max_new_tokens, logprob=True
         )
-        meta = payload.get("meta_info") or {}
+        if idx == 0 and raw_dump is not None:
+            # Record the response shape once so a future mismatch is diagnosed
+            # from data rather than inferred from missing keys.
+            try:
+                raw_dump.write_text(json.dumps(payload, indent=2)[:20000])
+            except (OSError, TypeError, ValueError):
+                pass
         results.append(
             {
                 "text": payload.get("text", ""),
-                "token_ids": list(meta.get("output_ids") or []),
+                "token_ids": extract_output_ids(payload),
                 "logprobs": extract_chosen_logprobs(payload),
             }
         )
@@ -202,6 +242,9 @@ def compare(a: list[dict], b: list[dict]) -> dict:
 
     return {
         "prompts": n,
+        # Zero here means nothing was captured and every ratio below is
+        # undefined rather than perfect. Callers must check it first.
+        "tokens_compared": token_total,
         "first_token_agreement": first_agree / n if n else 0.0,
         "full_sequence_agreement": full_agree / n if n else 0.0,
         "token_level_agreement": token_match / token_total if token_total else 0.0,
@@ -253,44 +296,81 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         waited = wait_for_server(base_url, args.startup_timeout, proc)
         print(f"    healthy after {waited:.0f}s")
 
-        # 1. populate
-        warm = build_prompt("general knowledge", FACTS[0][0])
-        post_generate(base_url, warm, max_new_tokens=4, logprob=False)
+        # 1. populate: send the measured prompts once so their KV enters the
+        #    radix tree and can later be demoted to L2.
+        prompts_to_send = [
+            build_prompt("general knowledge", q) for q, _ in FACTS[: args.prompts]
+        ]
+        for prompt in prompts_to_send:
+            post_generate(base_url, prompt, max_new_tokens=2, logprob=False)
 
-        # 2. filler that shares a prefix, to push things into L2
-        shared = " ".join(str(i) for i in range(args.filler_words // 2))
+        # 2. overflow L1 with DISTINCT filler.
+        #    The filler has to add tokens L1 has never seen. The first version
+        #    reused one shared prefix for every filler request, so each added
+        #    only a handful of new tokens and never came near the L1 cap: nothing
+        #    was ever evicted, and the run compared two cold prefills. Size the
+        #    filler above L1 (so the measured prompts are demoted) and below L2
+        #    (so they survive there long enough to be restored).
+        cap = scrape_metrics(base_url)
+        l1_cap = float(args.max_total_tokens or 0)
+        l2_cap = float(cap.get("sglang:hicache_host_total_tokens", 0.0))
+        target_tokens = (l1_cap + l2_cap) / 2 if l2_cap > l1_cap else l1_cap * 1.3
+        # ~1.3 tokens per word for these short synthetic words; the restore
+        # assertion below is what actually holds this honest.
+        words_total = max(200, int(target_tokens / 1.3))
+        per_request = max(40, words_total // max(1, args.filler_requests))
+        report["filler"] = {
+            "l1_cap_tokens": l1_cap,
+            "l2_cap_tokens": l2_cap,
+            "target_tokens": target_tokens,
+            "words_per_request": per_request,
+        }
+        print(f"    filler: {args.filler_requests} x {per_request:,} distinct words "
+              f"(target {target_tokens:,.0f} tokens between L1 {l1_cap:,.0f} and "
+              f"L2 {l2_cap:,.0f})")
         for i in range(args.filler_requests):
+            body = " ".join(f"f{i}w{j}" for j in range(per_request))
             try:
                 post_generate(
                     base_url,
-                    f"{shared} tail {i}\n\nQ: count?\n\nAnswer:",
-                    max_new_tokens=4,
+                    f"{body}\n\nQ: reply OK\n\nAnswer:",
+                    max_new_tokens=1,
                     logprob=False,
                 )
             except Exception:  # noqa: BLE001
                 pass
 
-        # 3. drop L1 so the measured prompts must come from L2
-        flushed = False
-        try:
-            http_get(f"{base_url}/flush_cache", timeout=120)
-            flushed = True
-        except Exception as exc:  # noqa: BLE001
-            print(f"    WARNING: /flush_cache unavailable ({exc}); the prompts "
-                  f"may be served from L1 and the comparison could be vacuous")
-        report["flushed_l1"] = flushed
+        # 3. /flush_cache is deliberately NOT called. It flushes the radix cache,
+        #    and if that reaches the host tier it deletes the very L2 state this
+        #    measurement exists to read back from -- the most likely reason an
+        #    earlier run recorded 0 restores on both configs. The filler above has
+        #    already evicted L1 by LRU: the measured prompts were sent first, so
+        #    they are the oldest nodes and are evicted first.
+        report["flushed_l1"] = False
 
-        # 4. measure
-        prompts_to_send = [
-            build_prompt("general knowledge", q) for q, _ in FACTS[: args.prompts]
-        ]
+        # 4. measure: re-send, so the shared prefix is restored out of L2
         report["generations"] = generate_all(
-            base_url, prompts_to_send, max_new_tokens=args.max_new_tokens
+            base_url,
+            prompts_to_send,
+            max_new_tokens=args.max_new_tokens,
+            raw_dump=REPO_ROOT / "results" / f"quality_raw_response_{tag}.json",
         )
         metrics = scrape_metrics(base_url)
         report["load_back_tokens"] = metrics.get("sglang:load_back_tokens_total", 0.0)
         report["backup_tokens"] = metrics.get("sglang:hicache_backup_tokens_total", 0.0)
         print(f"    L2 restores: {report['load_back_tokens']:,.0f} tokens")
+
+        # Refuse to report agreement from a run that never touched L2. Without
+        # this the harness will happily compare two identical cold prefills and
+        # print a perfect score, which is the most misleading output it could
+        # produce: it looks like the codec was validated when it never ran.
+        if report["load_back_tokens"] <= 0:
+            raise RuntimeError(
+                f"no L2 restores for {tag}: the re-sent prompts came from L1 "
+                f"(filler too small) or the prefix never reached L2. Any "
+                f"agreement figure here would describe two cold prefills, not "
+                f"the codec."
+            )
     finally:
         if proc.poll() is None:
             try:
@@ -331,12 +411,32 @@ def main() -> int:
     result["bf16_load_back_tokens"] = bf16.get("load_back_tokens", 0.0)
     result["int8_load_back_tokens"] = int8.get("load_back_tokens", 0.0)
 
+    out = Path(args.json) if args.json else REPO_ROOT / "results" / "quality.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"summary": result, "bf16": bf16, "int8": int8}, indent=2) + "\n")
+
+    # Validity before numbers. An earlier run captured no tokens at all and still
+    # printed "100% full-sequence agreement", because [] == [] is a match and
+    # there was no first token to disagree on. Never print a verdict that reads
+    # as a pass when nothing was compared.
+    if result["tokens_compared"] == 0:
+        print("\n" + "=" * 74)
+        print("QUALITY: INVALID -- no generated tokens were captured")
+        print("=" * 74)
+        print("  Agreement is undefined here, NOT 100%. Raw responses were dumped")
+        print("  so the field carrying output ids can be found:")
+        print("    results/quality_raw_response_bf16.json")
+        print("    results/quality_raw_response_int8.json")
+        print(f"\n  wrote {out}")
+        return 2
+
     print("\n" + "=" * 74)
     print("QUALITY: BF16 L2 vs INT8 L2, identical deterministic prompts")
     print("=" * 74)
     print(f"  L2 tokens restored   bf16 {result['bf16_load_back_tokens']:>12,.0f}"
           f"   int8 {result['int8_load_back_tokens']:>12,.0f}")
     print(f"  prompts compared     {result['prompts']:>12,}")
+    print(f"  tokens compared      {result['tokens_compared']:>12,}")
     print(f"  first-token agreement{result['first_token_agreement']:>12.1%}")
     print(f"  full-seq agreement   {result['full_sequence_agreement']:>12.1%}")
     print(f"  token-level agreement{result['token_level_agreement']:>12.1%}")
@@ -347,14 +447,9 @@ def main() -> int:
         print(f"  |dlogprob| p99       {result['p99_abs_delta']:>12.5f}")
         print(f"  |dlogprob| max       {result['max_abs_delta']:>12.5f}")
     else:
-        print("  logprobs unavailable -- agreement only")
-    if not bf16.get("flushed_l1") or not int8.get("flushed_l1"):
-        print("\n  WARNING: L1 was not flushed on at least one config, so these")
-        print("  generations may not have exercised the L2 path.")
-
-    out = Path(args.json) if args.json else REPO_ROOT / "results" / "quality.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"summary": result, "bf16": bf16, "int8": int8}, indent=2) + "\n")
+        print("  logprobs unavailable -- agreement only (see the raw dumps)")
+    print("\n  Both configs restored from L2 before these generations were")
+    print("  recorded, so the comparison is of codec-round-tripped KV.")
     print(f"\n  wrote {out}")
     return 0
 

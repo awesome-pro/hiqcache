@@ -17,7 +17,12 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from quality_compare import build_prompt, compare, extract_chosen_logprobs  # noqa: E402
+from quality_compare import (  # noqa: E402
+    build_prompt,
+    compare,
+    extract_chosen_logprobs,
+    extract_output_ids,
+)
 
 
 def _gen(tokens, logprobs, text="x"):
@@ -102,3 +107,46 @@ def test_prompts_are_deterministic_and_identical_across_configs():
     b = build_prompt("general knowledge", "What is 2+2?")
     assert a == b
     assert "What is 2+2?" in a
+
+
+# ------------------------------------------------------------- capture guards
+# The first real run of this harness captured no tokens at all and still printed
+# "100% full-sequence agreement": [] == [] is a match, and there is no first
+# token to disagree on. These pin the two defences against that reading as a
+# pass.
+
+
+def test_extract_output_ids_prefers_the_explicit_fields():
+    assert extract_output_ids({"output_ids": [1, 2, 3]}) == [1, 2, 3]
+    assert extract_output_ids({"meta_info": {"output_ids": [4, 5]}}) == [4, 5]
+
+
+def test_extract_output_ids_falls_back_to_chosen_logprobs():
+    """This build may omit output_ids; the ids ride along as the middle element
+    of the [logprob, token_id, text] triples."""
+    payload = {
+        "meta_info": {"output_token_logprobs": [[-0.5, 11, "a"], [-0.25, 22, "b"]]}
+    }
+    assert extract_output_ids(payload) == [11, 22]
+
+
+def test_extract_output_ids_is_empty_when_the_build_reports_neither():
+    assert extract_output_ids({}) == []
+    assert extract_output_ids({"meta_info": {"output_ids": None}}) == []
+
+
+def test_empty_capture_is_visibly_undefined_not_a_perfect_match():
+    """Reproduces the exact numbers that made a vacuous run look like a pass."""
+    a = [_gen([], []) for _ in range(5)]
+    b = [_gen([], []) for _ in range(5)]
+    r = compare(a, b)
+    assert r["tokens_compared"] == 0, "the validity guard keys off this"
+    # The two misleading figures the guard exists to suppress.
+    assert r["full_sequence_agreement"] == 1.0
+    assert r["first_token_agreement"] == 0.0
+
+
+def test_real_capture_gives_the_guard_a_nonzero_denominator():
+    a = [_gen([1, 2, 3], [])]
+    b = [_gen([1, 2, 3], [])]
+    assert compare(a, b)["tokens_compared"] == 3
