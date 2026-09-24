@@ -424,9 +424,16 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         report["after_filler"] = {
             "demoted_tokens": after_filler.get("sglang:hicache_backup_tokens_total", 0.0),
             "l2_used_tokens": after_filler.get("sglang:hicache_host_used_tokens", 0.0),
+            # L2 evictions. If the prefix matched nothing on the re-send, this
+            # says whether L2 threw it out or whether it never became a
+            # restorable node in the first place.
+            "l2_evicted_tokens": after_filler.get("sglang:hicache_dropped_tokens_total", 0.0),
+            "l1_used_estimate": prefix_tokens + sent_tokens,
         }
         print(f"    after filler: demoted {report['after_filler']['demoted_tokens']:,.0f} "
-              f"tokens, L2 holds {report['after_filler']['l2_used_tokens']:,.0f}")
+              f"tokens, L2 holds {report['after_filler']['l2_used_tokens']:,.0f} "
+              f"of {l2_cap:,.0f}, L2 evicted "
+              f"{report['after_filler']['l2_evicted_tokens']:,.0f}")
 
         # 3. /flush_cache is deliberately NOT called. It flushes the radix cache,
         #    and if that reaches the host tier it deletes the very L2 state this
