@@ -76,6 +76,24 @@ def build_prompt(subject: str, question: str) -> str:
     )
 
 
+def shared_preamble(repeats: int) -> str:
+    """A long, deterministic preamble shared by every measured prompt.
+
+    Without this the measured prompts are ~30 tokens each and share nothing, so
+    the radix tree holds a few hundred tiny nodes: nothing substantial is ever
+    demoted to L2 and the re-send has nothing to restore. That is why every
+    earlier attempt recorded 0 restores no matter how the filler was sized.
+
+    smoke_test.py gets restores reliably with exactly this trick
+    (``--prefix-repeats 400``), so the quality harness mirrors it. Sharing a long
+    prefix also makes each restore a meaningful amount of KV rather than ~30
+    tokens, which is what makes the comparison worth running at all.
+    """
+    return " ".join(
+        f"Reference {i}: archived record number {i} of the sequence." for i in range(repeats)
+    )
+
+
 def post_generate(
     base_url: str,
     prompt: str,
@@ -296,13 +314,20 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         waited = wait_for_server(base_url, args.startup_timeout, proc)
         print(f"    healthy after {waited:.0f}s")
 
-        # 1. populate: send the measured prompts once so their KV enters the
-        #    radix tree and can later be demoted to L2.
+        # 1. populate: send the measured prompts once so the shared prefix enters
+        #    the radix tree and can later be demoted to L2. The first response's
+        #    prompt_tokens is the server's own measure of how large that shared
+        #    prefix really is -- the filler sizing below depends on it.
         prompts_to_send = [
             build_prompt("general knowledge", q) for q, _ in FACTS[: args.prompts]
         ]
-        for prompt in prompts_to_send:
-            post_generate(base_url, prompt, max_new_tokens=2, logprob=False)
+        prefix_tokens = 0.0
+        for idx, prompt in enumerate(prompts_to_send):
+            payload = post_generate(base_url, prompt, max_new_tokens=2, logprob=False)
+            if idx == 0:
+                meta = payload.get("meta_info") or {}
+                prefix_tokens = float(meta.get("prompt_tokens") or 0)
+        print(f"    shared prefix: ~{prefix_tokens:,.0f} tokens per prompt")
 
         # 2. overflow L1 with DISTINCT filler, sized from the SERVER's own token
         #    accounting rather than a words-to-tokens guess.
@@ -318,10 +343,15 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         cap = scrape_metrics(base_url)
         l1_cap = float(args.max_total_tokens or 0)
         l2_cap = float(cap.get("sglang:hicache_host_total_tokens", 0.0))
-        if l2_cap > l1_cap:
-            stop_at = l1_cap + 0.35 * (l2_cap - l1_cap)
-        else:
-            stop_at = l1_cap * 1.2
+        # Two-sided constraint, and it is narrow:
+        #   filler > L1 - prefix   so the shared prefix is evicted from L1
+        #   filler < L2 - prefix   so it survives in L2 long enough to restore
+        # Target the middle of that window. Keying off L1 alone (as before)
+        # ignored that the prefix already occupies most of L1, so the target sat
+        # above the L2 ceiling and pushed the prefix straight back out again.
+        lo = max(0.0, l1_cap - prefix_tokens)
+        hi = max(lo + 1.0, l2_cap - prefix_tokens - 256)
+        stop_at = (lo + hi) / 2
         per_request = max(20, args.filler_words)
         sent_tokens = 0
         requests_sent = 0
@@ -352,12 +382,25 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         print(f"    filler: {requests_sent} requests, {sent_tokens:,} prompt "
               f"tokens, stopped at {stop_at:,.0f} (L1 {l1_cap:,.0f} -> L2 "
               f"{l2_cap:,.0f})")
-        if sent_tokens < l1_cap:
+        if sent_tokens < lo:
             raise RuntimeError(
-                f"filler only reached {sent_tokens:,} tokens against an L1 cap of "
-                f"{l1_cap:,.0f}: nothing was evicted, so the re-sent prompts would "
-                f"come from L1. Raise --filler-requests."
+                f"filler only reached {sent_tokens:,} tokens but {lo:,.0f} is "
+                f"needed to evict a {prefix_tokens:,.0f}-token prefix from an L1 "
+                f"cap of {l1_cap:,.0f}: nothing was demoted, so the re-sent "
+                f"prompts would come from L1. Raise --filler-requests."
             )
+
+        # Record what the filler actually achieved. If restores still come back
+        # zero this is what separates "nothing was ever demoted" (backup 0) from
+        # "demoted, then evicted from L2 as well" (backup > 0, L2 full) -- two
+        # opposite faults that look identical from the restore counter alone.
+        after_filler = scrape_metrics(base_url)
+        report["after_filler"] = {
+            "demoted_tokens": after_filler.get("sglang:hicache_backup_tokens_total", 0.0),
+            "l2_used_tokens": after_filler.get("sglang:hicache_host_used_tokens", 0.0),
+        }
+        print(f"    after filler: demoted {report['after_filler']['demoted_tokens']:,.0f} "
+              f"tokens, L2 holds {report['after_filler']['l2_used_tokens']:,.0f}")
 
         # 3. /flush_cache is deliberately NOT called. It flushes the radix cache,
         #    and if that reaches the host tier it deletes the very L2 state this
@@ -412,6 +455,18 @@ def main() -> int:
     parser.add_argument("--max-new-tokens", type=int, default=32)
     parser.add_argument("--filler-words", type=int, default=900)
     parser.add_argument("--filler-requests", type=int, default=40)
+    parser.add_argument(
+        "--prefix-repeats",
+        type=int,
+        default=300,
+        help=(
+            "Length of the deterministic preamble shared by every measured "
+            "prompt. It must be a large fraction of the L1 cap: short distinct "
+            "prompts give the radix tree nothing substantial to demote into L2, "
+            "so no restore ever happens. smoke_test.py uses 400 for exactly this "
+            "reason."
+        ),
+    )
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--startup-timeout", type=float, default=900.0)
     parser.add_argument("--sglang-root", default=str(REPO_ROOT.parent / "sglang"))
@@ -421,7 +476,11 @@ def main() -> int:
     configs = build_configs(
         args.model, args.host_size, 1, 1, max_total_tokens=args.max_total_tokens
     )
-    prompts = [build_prompt("general knowledge", q) for q, _ in FACTS[: args.prompts]]
+    preamble = shared_preamble(args.prefix_repeats)
+    prompts = [
+        preamble + "\n\n" + build_prompt("general knowledge", q)
+        for q, _ in FACTS[: args.prompts]
+    ]
 
     bf16 = run_config(args, configs["bf16"], prompts, tag="bf16")
     int8 = run_config(args, configs["int8"], prompts, tag="int8")
