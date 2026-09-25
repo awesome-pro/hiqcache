@@ -48,8 +48,8 @@ jobs:
       # clearest signal that a repository is an exercise rather than a product.
       #
       # `git grep` searches tracked files only, which keeps the check off
-      # .venv/site-packages (torch, networkx and sympy all contain "Phase 1"
-      # comments) without needing an exclude list.
+      # .venv/site-packages -- torch, networkx and sympy all carry comments
+      # mentioning this numbering -- without needing an exclude list.
       #
       # One deliberate exception: docs/experiment-b-results.md quotes the actual
       # subject line of a historical commit in its old->new SHA mapping table.
