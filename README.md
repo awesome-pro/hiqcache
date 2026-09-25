@@ -54,8 +54,13 @@ from L2, -25.9% mean TTFT and +21.6% output throughput.
 Capacity and bytes/token are exact: at `--hicache-size 8`,
 `hicache_host_total_tokens` reports 54,254 and 96,451, and backup bytes over backup
 tokens is 147,456.00 and 82,944.00 over 31 GiB and 6.24 GiB of traffic. Hit rates
-are the benchmark's own Cache Hit Details report, and the latency figures are single
-runs: read [experiment B](docs/experiment-b-results.md) first.
+are the benchmark's own Cache Hit Details report.
+
+Three further paired runs at the same budget hold the capacity and hit-rate figures
+steady (BF16 56.8 to 57.6%, INT8 72.7 to 73.4% across all four) but not the latency:
+BF16 mean TTFT ranged 1,193 to 2,558 ms against INT8's 1,202 to 1,259 ms, and one of
+the four pairs was 6% worse. The table is one pair; read
+[experiment B](docs/experiment-b-results.md) first.
 
 ## How it works
 
@@ -96,16 +101,20 @@ kernel with no CUDA changes. A BF16 row is 2048 bytes; a Qwen3-8B token is
   and logprob deltas, but it could not force the L2 read path: HiCache retained the
   device copy in every configuration tested, so no restore occurred.
   `bf16_load_back_tokens` and `int8_load_back_tokens` are both 0 in
-  `results/quality.json`, so the agreement figures describe two cold prefills, and
+  `results/quality_INVALID_no_l2_restores.json`, so the agreement figures describe two cold prefills, and
   the script now refuses to report in that state (`no L2 restores for <tag>`). A
   smoke run did confirm the compressed path executes: 1,797 tokens loaded back from
   L2 with the tree node at `evicted=True backuped=True host_value=1797`, and
   82,944 B/token against the BF16 control's 147,456. How per-element error
   propagates through 36 layers of attention into token choice is not measured.
-- Latency and throughput are single runs on one workload shape: 32 shared-prefix
-  groups × 2048 tokens at concurrency 8, with L1 capped at 16,384 tokens. p99 TTFT
-  is spiky on this hardware, and the crossover point where INT8's extra capacity
-  stops helping is not characterised.
+- Latency is not a stable result, because the BF16 baseline is bimodal. Across four
+  paired runs at the same budget, three improved by 46 to 51% and one was 6% worse.
+  INT8 was tight in all four (mean TTFT 1,202 to 1,259 ms) while BF16 ranged 1,193 to
+  2,558 ms, which is the interesting part: the compressed tier is the predictable
+  one. Quote the median pair (2,286 ms to 1,242 ms) or the range, never a single
+  run's delta. One workload shape throughout: 32 shared-prefix groups × 2048 tokens
+  at concurrency 8, L1 capped at 16,384 tokens. The crossover point where INT8's
+  extra capacity stops helping is not characterised.
 - Codec phase timing was not collected: the per-ack timing flag was unset, so the
   backup and restore duration histograms read 0.00 s. Byte and token volumes are
   unaffected, but no codec-overhead figure is claimed, so the codec stays pure
