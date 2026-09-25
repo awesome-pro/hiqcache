@@ -76,8 +76,17 @@ def build_prompt(subject: str, question: str) -> str:
     )
 
 
-def shared_preamble(repeats: int) -> str:
-    """A long, deterministic preamble shared by every measured prompt.
+def shared_preamble(repeats: int, seed: int = 0) -> str:
+    """A long, deterministic preamble.
+
+    ``seed`` makes each prompt's preamble DISTINCT. That matters more than it
+    looks: when every prompt shared one preamble the radix tree held a constant
+    ~4,905 tokens regardless of prompt count, so the working set never grew,
+    the filler's one-shot nodes were evicted ahead of the prefix, and the prefix
+    was backed up (backuped=True) but never actually left the device
+    (evicted=False). A re-send therefore matched in L1 and no restore ever
+    happened. Experiment B restored 187,989 tokens precisely because its working
+    set genuinely exceeded L1; distinct preambles reproduce that.
 
     Without this the measured prompts are ~30 tokens each and share nothing, so
     the radix tree holds a few hundred tiny nodes: nothing substantial is ever
@@ -90,7 +99,8 @@ def shared_preamble(repeats: int) -> str:
     tokens, which is what makes the comparison worth running at all.
     """
     return " ".join(
-        f"Reference {i}: archived record number {i} of the sequence." for i in range(repeats)
+        f"Reference {seed}-{i}: archived record {i} of series {seed}."
+        for i in range(repeats)
     )
 
 
@@ -103,10 +113,9 @@ def build_prompts(count: int, prefix_repeats: int) -> list[str]:
     and nothing was ever large enough to demote into L2. Two builders for the
     same list is the bug; there is now one.
     """
-    preamble = shared_preamble(prefix_repeats)
     return [
-        preamble + "\n\n" + build_prompt("general knowledge", q)
-        for q, _ in FACTS[:count]
+        shared_preamble(prefix_repeats, seed=i) + "\n\n" + build_prompt("general knowledge", q)
+        for i, (q, _) in enumerate(FACTS[:count])
     ]
 
 

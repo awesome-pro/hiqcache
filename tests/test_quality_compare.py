@@ -160,19 +160,21 @@ def test_real_capture_gives_the_guard_a_nonzero_denominator():
 # ~25 tokens per prompt" followed by 0 restores, with nothing obviously wrong.
 
 
-def test_prompts_carry_the_shared_preamble():
+def test_prompts_carry_a_long_preamble():
     ps = build_prompts(20, 300)
     assert len(ps) == 20
-    assert all(p.startswith(shared_preamble(300)) for p in ps)
+    assert all(p.startswith(shared_preamble(300, seed=i)) for i, p in enumerate(ps))
     assert len(ps[0].split()) > 2000, "the preamble must dominate the prompt"
 
 
-def test_preamble_is_deterministic_and_identical_for_every_prompt():
-    """Both configs and every prompt must share byte-identical prefix text."""
+def test_every_prompt_gets_a_distinct_preamble():
+    """Distinct preambles are what make the working set grow past L1. A shared
+    one held the tree at a constant size, so nothing was ever evicted from the
+    device and no restore could occur."""
     ps = build_prompts(5, 50)
-    assert ps[0].startswith(shared_preamble(50))
-    prefix = shared_preamble(50)
-    assert ps[0][: len(prefix)] == ps[4][: len(prefix)]
+    preambles = {p[: len(shared_preamble(50))] for p in ps}
+    assert len(preambles) == 5, "prompts must not share one prefix"
+    assert shared_preamble(50, seed=0) != shared_preamble(50, seed=1)
 
 
 def test_prompts_still_differ_in_their_question():
