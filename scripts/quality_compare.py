@@ -35,6 +35,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -211,12 +212,19 @@ def generate_all(
     *,
     max_new_tokens: int,
     raw_dump: Path | None = None,
+    concurrency: int = 1,
 ) -> list[dict]:
+    def _one(prompt: str) -> dict:
+        return post_generate(url, prompt, max_new_tokens=max_new_tokens, logprob=True)
+
+    if concurrency > 1:
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            payloads = list(pool.map(_one, prompts))
+    else:
+        payloads = [_one(p) for p in prompts]
+
     results = []
-    for idx, prompt in enumerate(prompts):
-        payload = post_generate(
-            url, prompt, max_new_tokens=max_new_tokens, logprob=True
-        )
+    for idx, payload in enumerate(payloads):
         if idx == 0 and raw_dump is not None:
             # Record the response shape once so a future mismatch is diagnosed
             # from data rather than inferred from missing keys.
@@ -356,13 +364,25 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         #    enough to demote or restore. The bug was invisible because both
         #    paths produced plausible-looking prompts.
         prompts_to_send = list(prompts)
-        prefix_tokens = 0.0
-        for idx, prompt in enumerate(prompts_to_send):
-            payload = post_generate(base_url, prompt, max_new_tokens=2, logprob=False)
-            if idx == 0:
-                meta = payload.get("meta_info") or {}
-                prefix_tokens = float(meta.get("prompt_tokens") or 0)
-        print(f"    shared prefix: ~{prefix_tokens:,.0f} tokens per prompt")
+        # Send CONCURRENTLY, like SGLang's own benchmark client. Back-to-back
+        # sequential requests each finish and then sit comfortably in the device
+        # pool; every configuration tested that way produced backuped=True but
+        # evicted=True exactly zero times, so nothing ever needed restoring. The
+        # benchmark client that restored 187,989 tokens in Experiment B keeps 8
+        # requests in flight, which keeps the device pool under pressure while
+        # requests are still running. That is the one variable left untested.
+        with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+            pop_payloads = list(
+                pool.map(
+                    lambda q: post_generate(base_url, q, max_new_tokens=2, logprob=False),
+                    prompts_to_send,
+                )
+            )
+        prefix_tokens = float(
+            ((pop_payloads[0].get("meta_info") or {}).get("prompt_tokens")) or 0
+        )
+        print(f"    prompt size: ~{prefix_tokens:,.0f} tokens each, "
+              f"{len(prompts_to_send)} prompts at concurrency {args.concurrency}")
 
         # 2. overflow L1 with DISTINCT filler, sized from the SERVER's own token
         #    accounting rather than a words-to-tokens guess.
@@ -469,6 +489,7 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
             prompts_to_send,
             max_new_tokens=args.max_new_tokens,
             raw_dump=REPO_ROOT / "results" / f"quality_raw_response_{tag}.json",
+            concurrency=args.concurrency,
         )
         metrics = scrape_metrics(base_url)
         report["load_back_tokens"] = metrics.get("sglang:load_back_tokens_total", 0.0)
@@ -521,6 +542,15 @@ def main() -> int:
     parser.add_argument("--max-total-tokens", type=int, default=8192)
     parser.add_argument("--prompts", type=int, default=20)
     parser.add_argument("--max-new-tokens", type=int, default=32)
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=8,
+        help=(
+            "Requests in flight. Matches SGLang's benchmark client, which is the "
+            "configuration Experiment B restored 187,989 tokens under."
+        ),
+    )
     parser.add_argument("--filler-words", type=int, default=900)
     parser.add_argument("--filler-requests", type=int, default=40)
     parser.add_argument(
