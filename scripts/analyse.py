@@ -291,16 +291,24 @@ def print_markdown(runs: list[Run]) -> None:
     print("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for run in runs:
         per_token = run.derived.get("measured_backup_bytes_per_token")
-        l2_tokens = run.delta.get("sglang:hicache_host_total_tokens", 0.0)
+        # L2 capacity is a GAUGE held for the pool's lifetime, so its delta over
+        # a run is ~0 and says nothing. Read the absolute value.
+        l2_tokens = run.absolute.get("sglang:hicache_host_total_tokens", 0.0)
         backup = run.delta.get("sglang:hicache_backup_bytes_total", 0.0)
         restore = run.delta.get("sglang:load_back_bytes_total", 0.0)
-        hit = run.delta.get("sglang:cache_hit_rate", 0.0)
+        # The serving-side hit rate is the benchmark's own Cache Hit Details.
+        # sglang:cache_hit_rate is a different quantity (it read 97% where the
+        # benchmark reported 55% on the same run), so quoting it here would
+        # regenerate wrong README numbers -- the same mistake that had to be
+        # corrected by hand in docs/experiment-a-results.md.
+        hit_pct = run.bench.get("hit_rate_pct")
+        hit_cell = f"{hit_pct:.1f}%" if hit_pct is not None else "n/a"
         prefill = run.delta.get("sglang:prompt_tokens_total", 0.0)
         per_token_cell = f"{per_token:,.0f}" if per_token else "-"
         print(
             f"| {run.config} | {run.workload} | {l2_tokens:,.0f} | "
             f"{per_token_cell} | {backup:,.0f} | {restore:,.0f} | "
-            f"{hit:.4f} | {prefill:,.0f} |"
+            f"{hit_cell} | {prefill:,.0f} |"
         )
 
 

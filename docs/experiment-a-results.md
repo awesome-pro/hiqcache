@@ -21,16 +21,20 @@ advantage entirely and shows the codec costs nothing in cache effectiveness.
 | **L2 bytes for that capacity** | **8,000,077,824 (8.000 GB)** | **4,500,043,776 (4.500 GB)** |
 | tokens backed up (D2H) | 216,144 | 222,628 |
 | tokens restored (H2D) | 122,678 | 126,979 |
-| cache hit rate | 97.03% | **96.94%** |
+| benchmark cache hit rate | 54.6% | **58.2%** |
 | L2 evictions | 0 | 0 |
 
-**The claim: the same logical cache, in 56.25% of the memory — 1.7778x denser —
-with a hit-rate difference of −0.09 points.**
+**The claim: the same logical cache, held in 56.25% of the host memory.**
 
-The hit rate is *expected* to match, because capacity is equal by construction.
-That is the result, not a disappointment: it says the codec's compression is free
-at the level of cache behaviour, so the capacity it buys in Experiment B is pure
-gain rather than a trade against hit rate.
+Both configurations ran without L2 eviction (`hicache_dropped_tokens_total = 0`),
+and in this single run the benchmark's own cache-hit report was 54.6% for BF16 and
+58.2% for INT8.
+
+Note on the hit-rate figures: they come from the benchmark's `Cache Hit Details`
+block, not from `sglang:cache_hit_rate`. The latter read 97.03% / 96.94% in the
+same runs and is a different quantity — using it here would overstate the hit
+rate and understate the difference. The benchmark report is the serving-side
+number and is the one quoted.
 
 Zero evictions on both sides confirms the workload sat inside the pinned capacity
 rather than spilling through it, so both configs were measured under the same
@@ -113,15 +117,22 @@ working set in 56.25% of the bytes, with the same hit rate and no evictions. The
 measured 82,944 bytes/token is the codec's own figure, not a model of it.
 
 **Does not show.** Quality. Nothing here says the restored KV is *correct* — that
-is what the Phase 15 comparison is for, and it is not yet valid (the first
-attempt exercised no L2 restore at all and captured no tokens; see the quality
-notes). Nor does it show latency: one run per config, and the backup/restore
-duration histograms still read 0.00 s, so no per-phase timing is claimed.
+is what the Phase 15 comparison is for, and it is not yet valid (every attempt
+so far exercised no L2 restore at all; see the quality notes). Nor does it show
+latency: one run per config, and the backup/restore duration histograms still
+read 0.00 s, so no per-phase timing is claimed.
+
+**Does not show that compression is free.** An earlier version of this document
+claimed the codec "costs nothing in cache effectiveness". At equal capacity a
+single run cannot establish that, and the benchmark hit rates above differ by
+more than zero. The defensible statement is the memory one: the same logical
+cache occupied 56.25% of the host memory.
 
 ## Limitations
 
-* **One run per config.** The hit-rate delta of −0.09 points is well inside what a
-  repeat would move; treat the two hit rates as equal rather than ranked.
+* **One run per config.** The +3.6-point hit-rate difference is a single
+  observation and is not established as a repeatable effect. Experiment A is
+  about *memory*, and the memory result is arithmetic, not statistical.
 * **Equal hit rate is by construction.** This experiment cannot detect a codec
   accuracy problem — that is deliberately out of scope.
 * **A single workload shape** (one prefix length, one concurrency), as in

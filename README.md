@@ -99,17 +99,15 @@ rather than capacity:
 | --- | --- | --- |
 | L2 bytes for 54,254 tokens | 8.000 GB | **4.500 GB** |
 | measured bytes/token | 147,456 | **82,944** |
-| cache hit rate | 97.03% | **96.94%** |
+| benchmark cache hit rate | 54.6% | **58.2%** |
 | L2 evictions | 0 | 0 |
 
-**The same logical cache in 56.25% of the memory — 1.7778× denser — with the hit
-rate unchanged to within −0.09 points.**
+**The same logical cache, held in 56.25% of the host memory — 1.7778× denser.**
 
-Equal hit rate is the *expected* result, because capacity is equal by
-construction. That is what makes it evidence: it removes the confound in
-Experiment B, where the hit-rate gain could have been attributed to capacity, and
-shows the codec costs nothing in cache effectiveness. Both configs verified
-`target == achieved == 54,254` against the pool's own gauge. Full record:
+Both configs verified `target == achieved == 54,254` against the pool's own gauge
+and ran without L2 eviction. Benchmark cache hit was 54.6% (BF16) and 58.2%
+(INT8) in this single run; that difference is one observation, not a repeatable
+effect — the *memory* result is the claim, and it is arithmetic. Full record:
 `docs/experiment-a-results.md`.
 
 ## Accuracy
