@@ -50,7 +50,7 @@ rather than spilling through it, so both configs were measured under the same
 | driver | 595.91.07 |
 | CUDA / torch | nvcc 13.0; torch 2.13.0+cu130 |
 | SGLang SHA | `38e366694d536564f5c607a9061d495ffd2d1938` |
-| hiqcache SHA | `4ddea29` (the harness that ran these two configs) |
+| hiqcache SHA | `101ebeb` (the harness that ran these two configs) |
 | results | `results/exp_bf16_exp-b-exp-a.json`, `results/exp_int8_exp-b-exp-a.json` |
 | server logs | `results/exp_{bf16,int8}_exp-b-exp-a.server.log` |
 | workload | 32 shared-prefix groups x 2048 = 65,536 reusable prefix tokens |
@@ -66,7 +66,7 @@ restart:
 * **`results/provenance.txt` describes the earlier suite run, not these two
   configs.** It was captured at the top of `reproduce_all.sh`, which aborted
   before Experiment A. These two configs ran afterwards, against the harness at
-  `4ddea29`, after the pod's clone was reconciled onto `main`.
+  `101ebeb`, after the pod's clone was reconciled onto `main`.
 
 ---
 

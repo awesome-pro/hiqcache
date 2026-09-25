@@ -24,7 +24,7 @@ Every number below is reproduced from the raw JSON and server logs under
 | host | Linux 6.8.0-139-generic x86_64, 62 GB RAM, 16 vCPU |
 | **SGLang SHA measured** | **`3bb2ef6602c12c102699f39830c80fa6cc2768d8`** |
 | branch | `hiqcache/int8-l2` |
-| hiqcache SHA | `9b9a48d` |
+| hiqcache SHA | `0c81a49` |
 
 ### Commit-identity rewrite — the SHAs above are post-rewrite
 

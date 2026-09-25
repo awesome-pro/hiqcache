@@ -185,10 +185,14 @@ def extract_chosen_logprobs(payload: dict) -> list[float]:
     SGLang returns ``meta_info.input_token_logprobs`` as
     ``[[logprob, token_id, text], ...]``.
     """
+    # OUTPUT logprobs, not input. ``token_ids`` here are the generated tokens and
+    # compare() aligns them position by position, so pairing them with
+    # input_token_logprobs (the prompt) compares different positions of different
+    # sequences. Prompt-side drift would be a separate metric.
     meta = payload.get("meta_info") or {}
-    raw = meta.get("input_token_logprobs")
+    raw = meta.get("output_token_logprobs")
     if raw is None:
-        raw = meta.get("output_token_logprobs")
+        raw = meta.get("input_token_logprobs")
     out: list[float] = []
     for entry in raw or []:
         if isinstance(entry, (list, tuple)) and entry:
@@ -278,6 +282,7 @@ def compare(a: list[dict], b: list[dict]) -> dict:
     deltas: list[float] = []
     length_deltas: list[int] = []
     diverged_at: list[tuple[int, int, int, int]] = []
+    common_lengths: list[int] = []
 
     for i in range(n):
         ta, tb = a[i]["token_ids"], b[i]["token_ids"]
@@ -296,6 +301,7 @@ def compare(a: list[dict], b: list[dict]) -> dict:
             if x != y:
                 break
             common += 1
+        common_lengths.append(common)
         for la, lb in zip(a[i]["logprobs"][:common], b[i]["logprobs"][:common]):
             deltas.append(abs(lb - la))
         if common < len(a[i]["logprobs"]):
@@ -332,9 +338,7 @@ def compare(a: list[dict], b: list[dict]) -> dict:
         # token. Means "the codec changed nothing for N tokens" and is a more
         # informative summary than a binary sequence match.
         "mean_agreed_prefix_tokens": (
-            sum(d[1] for d in diverged_at) / len(diverged_at)
-            if len(diverged_at) == n and n
-            else float(sum(len(x["token_ids"]) for x in a[:n])) / n
+            sum(common_lengths) / len(common_lengths) if common_lengths else 0.0
             if n
             else 0.0
         ),
@@ -504,7 +508,11 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         #    they are the oldest nodes and are evicted first.
         report["flushed_l1"] = False
 
-        # 4. measure: re-send, so the shared prefix is restored out of L2
+        # 4. measure: re-send, so the shared prefix is restored out of L2.
+        #    Snapshot the counter first: load_back_tokens_total is a
+        #    process-lifetime total, so reading it afterwards reports everything
+        #    the server ever restored, not what these generations used.
+        before_resend = scrape_metrics(base_url)
         report["generations"] = generate_all(
             base_url,
             prompts_to_send,
@@ -513,7 +521,11 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
             concurrency=args.concurrency,
         )
         metrics = scrape_metrics(base_url)
-        report["load_back_tokens"] = metrics.get("sglang:load_back_tokens_total", 0.0)
+        lifetime = metrics.get("sglang:load_back_tokens_total", 0.0)
+        report["load_back_tokens_lifetime"] = lifetime
+        report["load_back_tokens"] = lifetime - before_resend.get(
+            "sglang:load_back_tokens_total", 0.0
+        )
         report["backup_tokens"] = metrics.get("sglang:hicache_backup_tokens_total", 0.0)
         # The cache matched on the re-send is the missing half of the picture:
         # load_back == 0 on its own cannot tell "served from L1" apart from

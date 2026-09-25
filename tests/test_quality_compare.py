@@ -197,3 +197,15 @@ def test_group_count_drives_the_reusable_working_set():
     """32 groups x 4 x ~2048 tokens is what exceeded L1 in Experiment B."""
     ps = build_prompts(groups=32, per_group=4, prefix_repeats=230)
     assert len(ps) == 128
+
+
+def test_mean_agreed_prefix_averages_over_every_prompt():
+    """Regression for a reporting bug. The old form averaged the divergence
+    positions only when *every* prompt diverged, and otherwise fell back to the
+    mean full sequence length. So 19 identical prompts plus one diverging at
+    token 3 reported as though everything had agreed throughout."""
+    a = [_gen([1, 2, 3, 4], []) for _ in range(4)]
+    b = [_gen([1, 2, 3, 4], []) for _ in range(4)]
+    b[0] = _gen([1, 9, 3, 4], [])  # diverges at index 1
+    r = compare(a, b)
+    assert r["mean_agreed_prefix_tokens"] == (4 + 4 + 4 + 1) / 4
