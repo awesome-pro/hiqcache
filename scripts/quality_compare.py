@@ -378,6 +378,17 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         cap = scrape_metrics(base_url)
         l1_cap = float(args.max_total_tokens or 0)
         l2_cap = float(cap.get("sglang:hicache_host_total_tokens", 0.0))
+        # If the populate ALREADY overflows L1, that is the condition Experiment B
+        # restored 187,989 tokens under, and no filler is needed or wanted: the
+        # earlier prompts are demoted into L2 and their host nodes are retained,
+        # so re-sending them must restore. Filler on top only pushes them back
+        # out of L2 -- measured: 116,142 tokens demoted, L2 down to 12,210 of
+        # 13,564, and every re-sent prompt matched a node with no host value.
+        skip_filler = prefix_tokens * len(prompts_to_send) > l1_cap
+        if skip_filler:
+            print(f"    populate overflows L1 "
+                  f"({prefix_tokens * len(prompts_to_send):,.0f} > {l1_cap:,.0f} "
+                  f"tokens); skipping the filler so demoted prompts stay in L2")
         # Two-sided constraint, and it is narrow:
         #   filler > L1 - prefix   so the shared prefix is evicted from L1
         #   filler < L2 - prefix   so it survives in L2 long enough to restore
@@ -388,9 +399,9 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         hi = max(lo + 1.0, l2_cap - prefix_tokens - 256)
         stop_at = (lo + hi) / 2
         per_request = max(20, args.filler_words)
-        sent_tokens = 0
+        sent_tokens = lo if skip_filler else 0.0
         requests_sent = 0
-        for i in range(args.filler_requests):
+        for i in range(0 if skip_filler else args.filler_requests):
             body = " ".join(f"f{i}w{j}" for j in range(per_request))
             try:
                 payload = post_generate(
