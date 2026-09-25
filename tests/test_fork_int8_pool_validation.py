@@ -31,6 +31,13 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POOL_HOST = REPO_ROOT.parent / "sglang" / "python" / "sglang" / "srt" / "mem_cache" / "pool_host"
 
+# The real fork modules are loaded from the paths above at fixture setup; skip
+# at collection rather than erroring when the fork is missing (e.g. GitHub CI).
+if not (POOL_HOST / "mha_int8.py").is_file():
+    pytest.skip(
+        "requires the SGLang fork checked out at ../sglang", allow_module_level=True
+    )
+
 
 # ---------------------------------------------------------------------------
 # Load the real module with heavy imports stubbed

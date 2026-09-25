@@ -8,9 +8,16 @@ this runs anywhere the codec imports.
 
 import unittest
 
+import pytest
 import torch
 
-from int8_codec import (
+# The fork module is loaded by conftest only when the fork is present; skip at
+# collection rather than erroring when it is missing (e.g. GitHub CI).
+pytest.importorskip(
+    "int8_codec", reason="requires the SGLang fork checked out at ../sglang"
+)
+
+from int8_codec import (  # noqa: E402
     ALIGNMENT_BYTES,
     AMAX_FLOOR,
     PADDING_BYTES,

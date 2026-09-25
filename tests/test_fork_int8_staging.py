@@ -7,8 +7,16 @@ the buffer geometry and growth policy are pure tensor logic.
 
 import unittest
 
+import pytest
 import torch
-from int8_staging import (
+
+# The fork module is loaded by conftest only when the fork is present; skip at
+# collection rather than erroring when it is missing (e.g. GitHub CI).
+pytest.importorskip(
+    "int8_staging", reason="requires the SGLang fork checked out at ../sglang"
+)
+
+from int8_staging import (  # noqa: E402
     DEFAULT_STAGING_TOKENS,
     STAGING_GROWTH_QUANTUM,
     StagingBuffers,

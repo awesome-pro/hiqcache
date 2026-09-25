@@ -13,6 +13,7 @@ against the most likely silent failure.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from hiqcache.codec import AMAX_FLOOR as REF_AMAX_FLOOR
@@ -21,7 +22,13 @@ from hiqcache.codec import decode_records as ref_decode_records
 from hiqcache.codec import pack_records as ref_pack_records
 from hiqcache.layout import V1_LAYOUT
 
-import int8_codec as fork
+# The fork module is loaded by conftest only when the fork is present; skip at
+# collection rather than erroring when it is missing (e.g. GitHub CI).
+pytest.importorskip(
+    "int8_codec", reason="requires the SGLang fork checked out at ../sglang"
+)
+
+import int8_codec as fork  # noqa: E402
 
 HEAD_NUM = 8
 HEAD_DIM = 128

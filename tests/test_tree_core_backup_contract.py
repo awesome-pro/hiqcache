@@ -46,6 +46,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from conftest import FORK_AVAILABLE, FORK_ROOT  # noqa: E402
 
+# FORK_ROOT is None without the fork, and the module-level path building below
+# would raise TypeError during collection before any fixture or marker applies.
+if not FORK_AVAILABLE:
+    pytest.skip(
+        "requires the SGLang fork checked out at ../sglang", allow_module_level=True
+    )
+
 pytestmark = pytest.mark.skipif(
     not FORK_AVAILABLE, reason="SGLang fork not found; set HIQCACHE_SGLANG_ROOT"
 )
