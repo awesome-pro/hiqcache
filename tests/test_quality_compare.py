@@ -188,8 +188,9 @@ def test_grouped_prompts_share_a_prefix_within_a_group_only():
     ps = build_prompts(groups=4, per_group=3, prefix_repeats=20)
     assert len(ps) == 12
     pre = shared_preamble(20, seed=0)
-    assert ps[0][: len(pre)] == ps[2][: len(pre)], "same group must share"
-    assert ps[0][: len(pre)] != ps[3][: len(pre)], "different groups must differ"
+    # Round-robin: position 1 is group 1, not group 0's second use.
+    assert ps[0][: len(pre)] == ps[4][: len(pre)], "same group, next sweep, shares"
+    assert ps[0][: len(pre)] != ps[1][: len(pre)], "adjacent prompts differ by group"
 
 
 def test_group_count_drives_the_reusable_working_set():

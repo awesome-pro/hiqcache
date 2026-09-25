@@ -124,11 +124,19 @@ def build_prompts(groups: int, per_group: int, prefix_repeats: int) -> list[str]
     sending and again inside run_config for populating, and the second copy
     dropped the preamble -- silently turning a 3,500-token prefix into ~25.
     """
+    # ROUND-ROBIN over groups, not group-major. This is the whole mechanism.
+    # Group-major order puts a group's prompts back to back, so its prefix is
+    # reused within a few requests and never leaves L1 -- measured: 128 prompts
+    # at concurrency 8, 135,863 tokens demoted, and still 0 restores.
+    # SGLang's generated-shared-prefix dataset sweeps every group before
+    # repeating any, so the reuse distance is groups * prefix_tokens (32 x 2048 =
+    # 65,536 in Experiment B), far beyond a 16,384-token L1. That is what forces
+    # the device copy out between uses, which is what makes a restore necessary.
     out: list[str] = []
-    for g in range(groups):
-        preamble = shared_preamble(prefix_repeats, seed=g)
-        for i in range(per_group):
-            q, _ = FACTS[(g * per_group + i) % len(FACTS)]
+    for use in range(per_group):
+        for g in range(groups):
+            preamble = shared_preamble(prefix_repeats, seed=g)
+            q, _ = FACTS[(g + use) % len(FACTS)]
             out.append(preamble + "\n\n" + build_prompt("general knowledge", q))
     return out
 
