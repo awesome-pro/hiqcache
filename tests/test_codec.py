@@ -1,4 +1,4 @@
-"""Codec correctness tests (``PROJECT.md`` Phase 2).
+"""Codec correctness tests.
 
 Covers the required input classes -- random, all-zero, small, large, mixed
 magnitudes, realistic KV-shaped tensors -- plus packed-record layout, scale
@@ -236,7 +236,7 @@ def test_absmax_element_quantises_to_plus_or_minus_127():
 
 
 # ---------------------------------------------------------------------------
-# Error bounds  (PROJECT.md Phase 2: "quantization error <= scale / 2")
+# Error bounds  ("quantization error <= scale / 2")
 # ---------------------------------------------------------------------------
 
 

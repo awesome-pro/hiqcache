@@ -1,4 +1,4 @@
-"""Phase 14/18 analysis: turn pod result JSON into the PROJECT.md tables.
+"""Analysis: turn pod result JSON into the headline tables.
 
 Runs on the Mac, on results copied back from the pod. The pod is for measuring,
 not for analysing.
@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-#: Metrics that answer each PROJECT.md Phase 14 category.
+#: Metrics that answer each analysis category.
 CATEGORIES = {
     "storage": [
         ("sglang:hicache_host_total_tokens", "L2 token capacity", "count"),
@@ -109,8 +109,8 @@ def load_runs(root: Path) -> list[Run]:
     return runs
 
 
-#: Metrics the benchmark itself reports, which are the ones that answer
-#: PROJECT.md's serving questions. The Prometheus counters above are cumulative
+#: Metrics the benchmark itself reports, which are the ones that describe serving
+#: behaviour. The Prometheus counters above are cumulative
 #: process-lifetime totals and are useful for the codec's byte arithmetic, but
 #: they say nothing about cache effectiveness -- an earlier version of this file
 #: compared prefill tokens across configs and concluded "comparable
@@ -228,7 +228,7 @@ def print_comparison(tag: str, workload: str, configs: dict[str, Run]) -> None:
     row("restore time",
         lambda r: r.delta.get("sglang:load_back_duration_seconds"), "seconds")
     # ---- serving metrics, from the benchmark's own report ----------------
-    # These are the numbers PROJECT.md's serving table asks for. The
+    # These are the serving figures that matter. The
     # Prometheus counters above only describe bytes.
     print(f"  {'serving (benchmark report)':<30}" + "".join(f"{c:>15}" for c in order))
     for label, key, fmt in (

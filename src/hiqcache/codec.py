@@ -4,7 +4,7 @@ Pure ``torch``. **No SGLang imports, no CUDA-only ops, no host syncs** — the
 identical module runs under CPU, MPS and CUDA so the same conformance tests can
 be executed locally on a Mac and again on a GPU pod.
 
-Scope of V1 (see ``PROJECT.md`` Phase 1):
+Scope of the V1 format:
 
     For every (token, layer, K|V, KV head) compute a per-head scale
 
@@ -35,10 +35,10 @@ QUANT_MAX = 127
 #: Lower bound applied to the per-head absmax, as a power of two so it is
 #: exactly representable in BF16 on every backend.
 #:
-#: This is the "safe nonzero scale" of ``PROJECT.md`` Phase 1. A power of two is
-#: chosen so the clamp is exact and the same bits are produced on CPU, MPS and
-#: CUDA -- a clamp against a non-representable value would round differently per
-#: backend and make cross-device conformance testing meaningless.
+#: This is the "safe nonzero scale" the format requires for an all-zero head. A
+#: power of two is chosen so the clamp is exact and the same bits are produced on
+#: CPU, MPS and CUDA -- a clamp against a non-representable value would round
+#: differently per backend and make cross-device conformance testing meaningless.
 #:
 #: The value is deliberately tiny: ``2**-112 / 127`` is still a *normal* BF16
 #: (normal range starts at ``2**-126``), so the stored scale is never subnormal.
@@ -246,8 +246,8 @@ def verified_error_bound(
        consumes BF16, so the final product is rounded to BF16.
 
     Term 3 dominates at large magnitudes. It is the reason the naive
-    "error <= scale / 2" claim in ``PROJECT.md`` does not survive contact with a
-    BF16 output dtype, and the reason the honest claim is stated in three parts.
+    "error <= scale / 2" claim does not survive contact with a BF16 output dtype,
+    and the reason the honest claim is stated in three parts.
 
     ``restored`` is the decoded tensor (BF16); ``scales`` is the stored
     ``[..., head_num]`` BF16 scale. Both are broadcast against each other.
@@ -301,7 +301,7 @@ def error_stats(
 
     ``scales`` is the ``[..., head_num]`` stored scale; when given, the
     normalised error ``max|x_hat - x| / s`` is reported, which is the quantity
-    the ``<= 0.5`` bound in ``PROJECT.md`` refers to.
+    the naive ``<= 0.5`` bound refers to.
 
     Relative error is only informative where ``|x|`` is a meaningful fraction of
     its own head's scale. For an element near zero, ``|x_hat - x| / |x|`` is

@@ -18,8 +18,8 @@ Encoded record (one per ``(layer, K|V, token)`` row)::
 a pure element-wise byte copier that requires ``element_size % 128 == 0`` on
 CUDA, so a packed row is admissible with zero kernel changes.
 
-See ``docs/verification-notes.md`` for the kernel-side proof that
-``element_size = 1152`` lands on the fast path.
+See ``docs/design.md`` and ``docs/hicache-internals.md`` for the kernel-side
+proof that ``element_size = 1152`` lands on the fast path.
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ def _round_up(value: int, multiple: int) -> int:
 class RecordLayout:
     """Byte layout of one encoded MHA row.
 
-    Defaults reproduce the V1 format in ``PROJECT.md``: a 1152-byte row holding
-    a 1024-byte INT8 payload and 8 BF16 scales.
+    Defaults reproduce the V1 format: a 1152-byte row holding a 1024-byte INT8
+    payload and 8 BF16 scales, sized for 8 local KV heads at TP=1.
     """
 
     payload_bytes: int = DEFAULT_PAYLOAD_BYTES
@@ -176,7 +176,7 @@ class RecordLayout:
         return [slot * self.row_bytes for slot in range(slots)]
 
 
-#: The V1 format, matching ``PROJECT.md`` Phase 1.
+#: The V1 format: one 1152-byte row per (layer, K|V, token).
 V1_LAYOUT = RecordLayout()
 
 
@@ -188,7 +188,7 @@ def describe_compression(
     head_dim: int,
     itemsize: int = 2,
 ) -> dict[str, float | int]:
-    """Compute the storage-reduction numbers quoted in ``PROJECT.md``."""
+    """Compute the storage-reduction numbers for the given KV geometry."""
     layout.check_against(head_num, head_dim, itemsize)
     baseline = layout.uncompressed_bytes_per_token_all_layers(
         layer_num, head_num, head_dim, itemsize

@@ -1,7 +1,7 @@
 """Host-capacity arithmetic tests.
 
 These assert the *fixed-GB L2 capacity increase* -- the headline claim of
-Experiment B (``PROJECT.md`` Phase 13). They run locally with no GPU and
+Experiment B. They run locally with no GPU and
 re-derive SGLang's sizing formula independently so a drift in either the
 calculator or the codec format is caught.
 """

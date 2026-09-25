@@ -1,4 +1,4 @@
-"""Phase 11 smoke test: prove the compressed L2 path actually executes.
+"""Smoke test: prove the compressed L2 path actually executes.
 
 "Server didn't crash" is not evidence. This script drives a real server through a
 cold-populate-then-reuse cycle and asserts on measured counters that
@@ -240,7 +240,7 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / f"smoke_{args.config}.server.log"
 
-    print(f"=== Phase 11 smoke: {config.label}")
+    print(f"=== smoke test: {config.label}")
     print(f"=== expected bytes/token: {expected:,}")
 
     steps: list[Step] = []

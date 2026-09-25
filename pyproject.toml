@@ -1,17 +1,46 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hiqcache"
 version = "0.1.0"
-description = "Quantized hierarchical KV cache for SGLang HiCache"
+description = "INT8-quantized hierarchical KV cache for SGLang HiCache"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Abhinandan" }]
+keywords = [
+    "kv-cache",
+    "quantization",
+    "int8",
+    "llm-inference",
+    "llm-serving",
+    "sglang",
+    "hicache",
+    "memory-efficiency",
+]
 dependencies = ["torch>=2.4"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "numpy>=1.26"]
+
+[project.urls]
+Repository = "https://github.com/awesome-pro/hiqcache"
+Issues = "https://github.com/awesome-pro/hiqcache/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

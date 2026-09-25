@@ -1,10 +1,22 @@
-# SGLang HiCache trace — main @ `434c2e3adcd77afe42d6604b693d97aef71938e6`
+# SGLang HiCache internals — main @ `434c2e3adcd77afe42d6604b693d97aef71938e6`
 
-Snapshot: `git clone --depth 1 https://github.com/sgl-project/sglang.git`, HEAD commit
-`434c2e3adcd77afe42d6604b693d97aef71938e6`, authored **2026-09-25 15:06:24 +0800**,
+Reference for the SGLang HiCache memory hierarchy, taken from a fresh clone:
+
+```
+git clone --depth 1 https://github.com/sgl-project/sglang.git
+```
+
+HEAD commit `434c2e3adcd77afe42d6604b693d97aef71938e6`, authored **2026-09-25 15:06:24 +0800**,
 subject `[HiCache] fix: Drain pending backups before internal Mamba write-back (#41092)`.
 
 No files in SGLang were modified. Local clone used for the trace: `/tmp/sglang_trace`.
+
+Sections A–H document the upstream code as it stands at that commit: the L1 device pools,
+the L2 host pools, the exact eviction and restore paths, the Qwen3-8B page geometry, the
+stream and event semantics, the seams where a codec can be inserted, the state of the
+upstream KV-compression RFC, and the existing host-cache round-trip tests. Section I
+describes the INT8 host-cache codec integration this project builds on top of that code;
+its line references also point at `434c2e3a`.
 
 ---
 
@@ -120,7 +132,7 @@ Tensor placement per backend: `managers/cache_controller.py:869-909 move_indices
 
 ## C. Exact L1→L2 eviction and L2→L1 restore functions
 
-### Naming reality check (matters for any patch plan)
+### Naming reality check
 
 - **`write_backup`, `load_backup`, `_evict_backup` do not exist at HEAD** (repo-wide grep: 0 hits).
   The hierarchical path is `UnifiedRadixCache` (`unified_radix_cache.py:162`).
@@ -377,7 +389,8 @@ per-layer codec. A second, slightly higher seam is
 `l2_transfer.py:131 submit_device_to_host` / `:144 submit_host_to_device`, which is where
 PR #40551 hooked in (see §G) — but that requires `L2Transfer`/`CacheOperation` plumbing.
 
-Three viable shapes, ranked by patch size:
+Three shapes are viable, ranked by patch size. The integration described in §I takes the
+first; the other two are alternatives it does not use:
 
 1. **Subclass of `MHATokenToKVPoolHost` holding an encoded arena.** New file
    `pool_host/mha_int8.py` modelled directly on the existing `pool_host/mha_mxfp8.py`
@@ -385,8 +398,9 @@ Three viable shapes, ranked by patch size:
    (`mha.py:1510-1531`). Overrides: `get_size_per_token`, `init_kv_buffer`,
    `backup_from_device_all_layer`, `load_to_device_per_layer`, `get_data_page`,
    `set_from_flat_data_page`, `get_dummy_flat_data_page`, `get_page_buffer_meta`,
-   `get_hybrid_pool_buffer`. **Nothing else in the repo changes.** This is the smallest
-   patch that actually reduces host bytes.
+   `get_hybrid_pool_buffer`. **No other SGLang subsystem changes.** This is the smallest
+   shape that actually reduces host bytes; it is the one this project implements, together
+   with two self-contained helper modules alongside it (§I.3).
 2. Decorator/wrapper around an existing host pool instance, injected at
    `build_kv_host_pool` (`hybrid_pool_assembler.py:140-175`). Smaller diff, but it must
    proxy ~20 attributes and breaks `isinstance` checks
@@ -436,7 +450,7 @@ Constraints a codec must respect:
 - L3 storage registers `get_hybrid_pool_buffer()` for zero-copy I/O
   (`storage/nixl/hicache_nixl.py:417,458-461`, `storage/umbp/umbp_store.py:1045`) and
   derives per-page pointers/sizes from `get_page_buffer_meta(...)`. An encoded arena
-  changes both, so v1 should reject `--hicache-storage-backend` (the
+  changes both, so v1 rejects `--hicache-storage-backend` (the
   `mha_mxfp8.py:245-266` `_storage_pages_unsupported()` precedent).
 - Retraction (`--disaggregation-decode-retraction-backup=host_pool`) bypasses the queues:
   `UnifiedRadixCache.backup_kv_cache` `:1465` / `restore_kv_cache` `:1505` call
@@ -544,7 +558,16 @@ End-to-end:
 
 ---
 
-## I. Proposed smallest BF16→8-bit host-cache codec integration
+## I. INT8 host-cache codec integration design
+
+This section is a design description, not part of the upstream trace: it specifies the INT8
+L2 host-cache codec this project integrates into the HiCache paths documented above. All
+upstream line references in it still point at `434c2e3a`. The integration lands in this
+project's SGLang fork as three new files under `python/sglang/srt/mem_cache/pool_host/` —
+`int8_codec.py` (record quantise / pack / decode), `int8_staging.py` (device staging buffers
+and pointer tables), `mha_int8.py` (`MHATokenToKVPoolHostINT8`) — plus one dispatch branch in
+`get_mha_host_pool_cls` and the `SGLANG_EXPERIMENTAL_HICACHE_INT8` /
+`SGLANG_HICACHE_INT8_STAGING_TOKENS` env knobs. Full source map: `docs/sglang-integration.md`.
 
 ### I.1 Blocking facts
 
@@ -556,35 +579,45 @@ End-to-end:
   `element_size % 128 == 0` on CUDA.
 - A page is `page_size` consecutive token slots; the codec touches whole pages only.
 
-### I.2 Codec v1: symmetric per-(layer, K|V, head) INT8, scale in a side buffer
+### I.2 Codec v1: symmetric per-(layer, K|V, head) INT8
 
 Quantization granularity: one scale per `(layer, k|v, head, token)` group of **128 elements**.
 This is exactly one `head_dim` row, so the transform is a pure element-wise/row-wise map
 and both the encode and the decode can be expressed as `torch` ops on the transfer stream
 (no custom CUDA kernel in v1).
 
-Storage per token per (layer, K|V): `8 heads * 128 B = 1024 B` int8 payload
-plus `8 * 2 B = 16 B` bf16 scales → **1040 B**, versus 2048 B raw ⇒ **1.97×**.
+**Encoded record.** v1 packs the whole row into one aligned record per
+`(token, layer, K|V)`: `1024 B` INT8 payload (`8 heads * 128 B`) plus `16 B` bf16 scales
+plus `112 B` padding = **1152 B**, and `1152 = 9 * 128`. One row width therefore serves both
+the host arena and the staging buffers, so every copy stays on the existing JIT kernel.
+Per token per (layer, K|V) that is `1152 B` versus 2048 B raw ⇒ **1.78×**; one Qwen3-8B page
+(1 token, 36 layers) is `147,456 B → 82,944 B`.
 
-Total for one Qwen3-8B page (1 token, 36 layers): `147,456 B → 74,880 B`.
+Two further encodings were considered and are not the one v1 packs:
 
-**Alignment for the JIT kernel.** Encode the payload as the kernel destination and move the
-scales in a second pass:
-
-- Payload (`int8`, `uint8` view) per token per layer: `2 * 1024 = 2048 B` for K+V,
-  which is `% 128 == 0`; the arena packs K rows contiguously then V rows contiguously, so
-  `element_size = 2048` is admissible and `kv_cache_dst_stride_bytes = 2048`.
-- Scales: a second, tiny registered arena with `element_size = 32` would break the 128 B round,
-  so instead move scales with plain `torch` index copies on the same stream
+- **Payload-only rows plus a separate scale arena.** Storage per token per (layer, K|V):
+  `8 heads * 128 B = 1024 B` int8 payload plus `8 * 2 B = 16 B` bf16 scales → **1040 B**,
+  versus 2048 B raw ⇒ **1.97×**; total for one Qwen3-8B page (1 token, 36 layers):
+  `147,456 B → 74,880 B`. **Alignment for the JIT kernel:** the payload is the kernel
+  destination and the scales move in a second pass. Payload (`int8`, `uint8` view) per token
+  per layer is `2 * 1024 = 2048 B` for K+V, which is `% 128 == 0`; with the arena packing
+  K rows contiguously then V rows contiguously, `element_size = 2048` is admissible and
+  `kv_cache_dst_stride_bytes = 2048`. Scales: a second, tiny registered arena with
+  `element_size = 32` would break the 128 B round, so instead the scales move with plain
+  `torch` index copies on the same stream
   (`scale_arena[page_slot, layer, k|v, head, :] = ...`), which is cheap
   (`8*2*2 = 32 B` per token per layer) and needs no kernel work. This keeps the fast path
   entirely on the existing JIT kernel.
-- Alternative that avoids the side buffer: fold the scale into the payload row by using a
-  **per-(layer, K|V) fixed scale** (calibrated once, or `amax` over the whole page). Then the
-  encoded row is exactly `1024 B` (`% 128 == 0`), `element_size = 1024`,
-  `kv_cache_dst_stride_bytes = 1024`, compression **2.0×**, and no side buffer at all —
-  at the cost of per-token adaptivity. Both variants need zero kernel changes; the side-buffer
-  variant is the accuracy/simplicity tradeoff worth taking.
+- **Per-(layer, K|V) fixed scale, no side buffer.** Folding the scale into the payload row
+  with a **per-(layer, K|V) fixed scale** (calibrated once, or `amax` over the whole page)
+  makes the encoded row exactly `1024 B` (`% 128 == 0`), `element_size = 1024`,
+  `kv_cache_dst_stride_bytes = 1024`, compression **2.0×**, and removes the side buffer —
+  at the cost of per-token adaptivity.
+
+All three need zero kernel changes. v1 takes the packed `1152 B` record because it keeps
+per-token adaptivity, satisfies the 128 B round with a single row width, and needs no second
+arena; the packed row also makes the D2H and H2D movers symmetric, at `element_size = 1152`
+on both sides.
 
 Arena layout (all uint8, one pinned allocation, page-major):
 
@@ -596,7 +629,7 @@ Per-page byte count `encoded_size_per_token * page_size`, exposed as
 `get_size_per_token()`'s encoded analogue so `HostKVCache.__init__`
 (`base.py:194-208`) sizes the arena automatically.
 
-### I.3 Files and exact functions to change
+### I.3 File and function map
 
 New file `python/sglang/srt/mem_cache/pool_host/mha_int8.py`:
 
@@ -605,15 +638,18 @@ class MHATokenToKVPoolHostINT8(MHATokenToKVPoolHost):
     """BF16/FP16 MHA host pool that stores int8 payload + bf16 row scales."""
 ```
 
+Alongside it, `pool_host/int8_codec.py` holds the row quantise/pack/decode and
+`pool_host/int8_staging.py` the staging buffers and pointer tables.
+
 Overrides, with the reason each is required:
 
 | Override | Base / reference | Why |
 | --- | --- | --- |
 | `get_size_per_token()` | `mha.py:208-213` | Return `encoded_bytes_per_token`. Called at `base.py:194` before `init_kv_buffer`, so it must read `self.device_pool` directly and set `head_num/head_dim/layer_num` as the parent does. |
-| `init_kv_buffer()` | `mha.py:222-263` | Allocate the uint8 arena + scale arena through `ALLOC_MEMORY_FUNCS` (`common.py:325`) with `pin_memory=True`; build per-layer `k_data_ptrs`/`v_data_ptrs` via `make_kernel_ptr_table` (`common.py:296`). Do not allocate bf16 `k_buffer`/`v_buffer`. |
-| `can_use_write_back_jit = False`; skip `_init_write_back_staging_buffers` | `base.py:191`, `mha.py:265-288` | The staged `page_first` path writes raw bf16 into `k_buffer`. |
-| `backup_from_device_all_layer(device_pool, host_indices, device_indices, io_backend)` | `mha.py:465-584` | **Encode.** Keep `io_backend == "kernel"` + `layout == "layer_first"` ⇒ `jit_transfer_hicache_all_layer(..., k_ptr_dst=<payload_arena K ptrs>, v_ptr_dst=<payload arena V ptrs>, indices_dst=host_indices, k_ptr_src=device_pool.k_data_ptrs, ..., kv_cache_dst_stride_bytes=enc_row_bytes, element_size=enc_element_bytes)` (`mha.py:482-495`). Copy the staging bf16 into device-visible form, then enqueue the row-wise absmax/scale + `torch` int8 cast and write the scales into the scale arena — all on the current (D2H) stream, so the existing `_submission` event records after it. |
-| `load_to_device_per_layer(device_pool, host_indices, device_indices, layer_id, io_backend, *, is_draft=False)` | `mha.py:298-435` | **Decode.** Enqueue the dequant (`int8.to(bf16) * scale`) into `device_pool.k_buffer[device_layer_id]` / `v_buffer[...]` at `device_indices`, on `host_to_device_stream`. Reuse the layer-ownership guard at `mha.py:308-315` verbatim. Because `on_layer_done(layer_id)` fires right after this returns (`l2_transfer.py:177`), the dequant must be enqueued here, not later. |
+| `init_kv_buffer()` | `mha.py:222-263` | Allocate the uint8 arena through `ALLOC_MEMORY_FUNCS` (`common.py:325`) with `pin_memory=True`; build per-layer `k_data_ptrs`/`v_data_ptrs` via `make_kernel_ptr_table` (`common.py:296`); allocate the directional staging buffer pair here as well. Do not allocate bf16 `k_buffer`/`v_buffer`. |
+| No use of the inherited staged `page_first` write-back path | `base.py:191`, `mha.py:265-288` | That staged path writes raw bf16 into `k_buffer`, so it cannot carry an encoded row. The encoded pool is restricted to `layer_first` at construction (§I.4) and owns its own staging buffers instead. |
+| `backup_from_device_all_layer(device_pool, host_indices, device_indices, io_backend)` | `mha.py:465-584` | **Encode.** Encode each layer's rows into the device staging buffer with the row-wise absmax/scale + `torch` int8 cast, then issue one `jit_transfer_hicache_all_layer(..., k_ptr_dst=<arena K ptrs>, v_ptr_dst=<arena V ptrs>, k_ptr_src=<staging K ptrs>, v_ptr_src=<staging V ptrs>, indices_src=arange(n), indices_dst=host_indices, kv_cache_dst_stride_bytes=enc_row_bytes, element_size=enc_row_bytes)` (`mha.py:482-495`). The mover takes a single `element_size` and requires it to equal the destination stride, so a 2048 B bf16 device row cannot be written straight into a 1152 B encoded row: staging is mandatory. Everything is enqueued on the current (D2H) stream, so the existing `_submission` event records after the encode. |
+| `load_to_device_per_layer(device_pool, host_indices, device_indices, layer_id, io_backend, *, is_draft=False)` | `mha.py:298-435` | **Decode.** Move this layer's encoded rows from the arena into the H2D staging buffer with `jit_transfer_hicache_one_layer` (`mha.py:320/345`), then enqueue the dequant (`int8.to(bf16) * scale`) into `device_pool.k_buffer[device_layer_id]` / `v_buffer[...]` at `device_indices`, on `host_to_device_stream`. Reuse the layer-ownership guard at `mha.py:308-315` verbatim. Because `on_layer_done(layer_id)` fires right after this returns (`l2_transfer.py:177`), the dequant must be enqueued here, not later. |
 | `get_data_page(index, flat=True)` | `mha.py:586-598` | Return the encoded page blob (+ optional self-describing header) instead of raw kv. |
 | `set_from_flat_data_page(index, data_page)` | `mha.py:608-640` | Inverse. |
 | `get_dummy_flat_data_page()` | `mha.py:600-606` | Encoded-size dummy for prefetch/init. |
@@ -627,7 +663,7 @@ Dispatch — the only edit to an existing file (`pool_host/mha.py:1510-1531`):
 def get_mha_host_pool_cls(device_pool: MHATokenToKVPool) -> type:
     if isinstance(device_pool, MHATokenToKVPoolMXFP8):
         ...
-    if envs.SGLANG_HICACHE_HOST_CODEC.get() == "int8":
+    if envs.SGLANG_EXPERIMENTAL_HICACHE_INT8.get():
         from sglang.srt.mem_cache.pool_host.mha_int8 import MHATokenToKVPoolHostINT8
         return MHATokenToKVPoolHostINT8
     if device_pool.head_dim != device_pool.v_head_dim:
@@ -635,10 +671,16 @@ def get_mha_host_pool_cls(device_pool: MHATokenToKVPool) -> type:
     return MHATokenToKVPoolHost
 ```
 
-That is **one new file + one dispatch branch**. No changes to `l2_transfer.py`,
-`cache_controller.py`, `unified_radix_cache.py`, or any CUDA source.
+The landed branch gates on `envs.SGLANG_EXPERIMENTAL_HICACHE_INT8.get()`, sizes the device
+staging rows from `SGLANG_HICACHE_INT8_STAGING_TOKENS` (default `2048`), and is checked
+**after** the MXFP8 and asymmetric cases, because neither is representable in the INT8
+record.
 
-### I.4 Validation the codec must perform at construction
+That is **one new pool file + one dispatch branch**, plus two self-contained helper modules
+and the env knobs. No changes to `l2_transfer.py`, `cache_controller.py`,
+`unified_radix_cache.py`, or any CUDA source.
+
+### I.4 Validation the codec performs at construction
 
 Reject (raising during init, per the RFC's "fail fast" requirement):
 
@@ -647,14 +689,16 @@ Reject (raising during init, per the RFC's "fail fast" requirement):
 - `storage_dtype not in (torch.bfloat16, torch.float16)`; `device_pool.is_quantized_kv_cache`.
 - `layout != "layer_first"` (or supply the layout-specific stride formula for `page_first`).
 - `device_pool.head_dim != device_pool.v_head_dim` (asymmetric K/V out of scope).
-- Any HiCache storage backend configured (`--hicache-storage-backend`) unless
-  `get_data_page`/`get_page_buffer_meta` are fully implemented for the encoded blob.
+- Any HiCache storage backend configured (`--hicache-storage-backend`): an encoded arena
+  needs `get_data_page`/`get_page_buffer_meta` fully implemented for the encoded blob before
+  L3 I/O can be allowed, and the integration refuses L3 storage outright
+  (`mha_mxfp8.py:245-266`).
 - `device_pool.row_dim * device_pool.dtype.itemsize % 128 != 0` ⇒ codec not admissible on the
   CUDA JIT path (on ROCm the 64/32/16 B rounds widen this).
 - Warn that repeated `--disaggregation-decode-retraction-backup=host_pool` cycles re-encode
   reconstructed KV, i.e. lossy error can accumulate on that path (RFC §"Lossy recompression").
 
-### I.5 Tests to add
+### I.5 Tests for the codec
 
 1. `test/registered/kernels/ops/kvcache/test_hicache_int8.py` — mirror
    `test_hicache.py::_run_transfer_roundtrip_mha:167` and

@@ -1,6 +1,6 @@
 """Packed-layout tests: sizes, alignment, region disjointness, compression math.
 
-These lock in the numbers quoted in ``PROJECT.md`` Phase 1 so that any change to
+These lock in the published layout numbers so that any change to
 the format is caught immediately.
 """
 
@@ -22,7 +22,7 @@ from hiqcache.layout import (
 
 
 # ---------------------------------------------------------------------------
-# PROJECT.md Phase 1 numbers
+# Published layout numbers
 # ---------------------------------------------------------------------------
 
 

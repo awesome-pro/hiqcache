@@ -81,5 +81,5 @@ if [ "$TESTS_ONLY" -eq 1 ]; then
 fi
 
 # ------------------------------------------------------------- measurements
-say "Measurement suite (see docs/pod-guide.md for what each step proves)"
+say "Measurement suite (see docs/reproducing-on-a-pod.md for what each step proves)"
 exec bash scripts/reproduce_all.sh

@@ -115,11 +115,11 @@ over 283 MB and 6.24 GiB of real traffic respectively.
 
 **The extra capacity converts into served work.** INT8 restored 167,899 tokens
 from L2 against BF16's 126,997 (+32%), which is what produces the hit-rate and
-TTFT differences. The mechanism is the one PROJECT.md hypothesised: at a fixed
+TTFT differences. The mechanism is the one the design predicts: at a fixed
 host budget, more of the working set stays resident, so fewer prefixes are
 recomputed.
 
-**Phase 11 mechanism checks (separate runs):** the INT8 pool was confirmed to
+**Mechanism checks (separate runs):** the INT8 pool was confirmed to
 store 82,944 B/token and to restore from L2 (1,797 tokens loaded back, with the
 tree node observed as `evicted=True backuped=True host_value=1797`). The BF16
 control reported 147,456 B/token, so the measurement tracks the pool class rather
@@ -147,7 +147,8 @@ than reporting a constant.
 4. **`--hicache-ratio` was not exercised in *this* experiment.** Only fixed
    `--hicache-size`. Experiment A has since been run at equal logical capacity and
    does use the ratio knob: `docs/experiment-a-results.md` reports 8.000 -> 4.500 GB
-   for the same 54,254 tokens with the hit rate unchanged to within −0.09 points.
+   for the same 54,254 tokens, with benchmark cache hit 54.6% (BF16) vs 58.2%
+   (INT8) in that single run.
 
 5. **One workload shape.** 65,536 reusable tokens at concurrency 8. The
    crossover point where INT8 stops helping (workload exceeding the INT8 L2) is

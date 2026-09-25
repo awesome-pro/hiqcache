@@ -2,7 +2,7 @@
 # Bootstrap a fresh GPU pod for the HiQCache pod run.
 #
 # Idempotent and safe to re-run. Does NOT install SGLang itself -- that is a
-# separate, heavier step (see docs/pod-guide.md step 3) because the right command
+# separate, heavier step (see docs/reproducing-on-a-pod.md step 3) because the right command
 # depends on the CUDA version the pod image ships.
 #
 # Usage:
@@ -52,7 +52,7 @@ mkdir -p "$WORKSPACE"
 cd "$WORKSPACE"
 
 # ---------------------------------------------------------------- provenance
-say "Recording provenance (required by PROJECT.md Phase 14)"
+say "Recording provenance (hardware, driver, CUDA, torch, commit SHAs)"
 mkdir -p provenance
 echo "  writing provenance/hardware.txt (a few seconds; plain nvidia-smi can pause briefly)"
 {
@@ -134,7 +134,7 @@ without it the JIT path fails in a way that is hard to attribute.)
 
 If nvcc or the CUDA headers are missing, the compiled HiCache kernels cannot
 work on this image at all. Switch to an image with a full CUDA toolkit rather
-than debugging this one; see docs/pod-guide.md Appendix A.
+than debugging this one; see docs/reproducing-on-a-pod.md.
 
 NOTE
   die "environment probe failed (gate 0)"
@@ -249,7 +249,7 @@ cat <<'EOF'
 Next: install SGLang, then run the pool tests.
 
   cd sglang
-  pip install -e "python[all]"        # see docs/pod-guide.md step 3 for the
+  pip install -e "python[all]"        # see docs/reproducing-on-a-pod.md for the
                                       # CUDA-version-specific command
   python -m pytest test/registered/unit/mem_cache/test_hicache_int8_codec.py -v
   python -m pytest test/registered/unit/mem_cache/test_hicache_int8_pool_host_unit.py -v

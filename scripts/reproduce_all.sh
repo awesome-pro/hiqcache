@@ -55,10 +55,10 @@ say "Provenance"
 # either fails now, stop -- something in the integration or the harness regressed
 # and no benchmark below would mean anything.
 if [ "$SKIP_SMOKE" -eq 0 ]; then
-  say "Phase 11 smoke: INT8 compressed L2 (expect 82,944 B/token, restore > 0)"
+  say "Smoke test: INT8 compressed L2 (expect 82,944 B/token, restore > 0)"
   $PY scripts/smoke_test.py --config int8 --host-size "$SMOKE_HOST_SIZE"
 
-  say "Phase 11 control: BF16 L2 (expect 147,456 B/token)"
+  say "Smoke control: BF16 L2 (expect 147,456 B/token)"
   $PY scripts/smoke_test.py --config bf16 --host-size "$SMOKE_HOST_SIZE"
 fi
 
@@ -105,7 +105,7 @@ for cfg in bf16 int8; do
 done
 
 # ------------------------------------------------------------- quality
-say "Phase 15 quality: identical deterministic prompts, BF16 vs INT8"
+say "Quality: identical deterministic prompts, BF16 vs INT8"
 $PY scripts/quality_compare.py --host-size "$SMOKE_HOST_SIZE" --prompts 20
 
 say "DONE -- pull results/ before terminating the pod"

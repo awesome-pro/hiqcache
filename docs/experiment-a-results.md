@@ -117,8 +117,9 @@ working set in 56.25% of the bytes, with the same hit rate and no evictions. The
 measured 82,944 bytes/token is the codec's own figure, not a model of it.
 
 **Does not show.** Quality. Nothing here says the restored KV is *correct* — that
-is what the Phase 15 comparison is for, and it is not yet valid (every attempt
-so far exercised no L2 restore at all; see the quality notes). Nor does it show
+is what the generation-quality comparison is for, and it is not yet valid (the
+quality harness could not force the L2 restore path in any attempt so far; see
+the quality notes). Nor does it show
 latency: one run per config, and the backup/restore duration histograms still
 read 0.00 s, so no per-phase timing is claimed.
 

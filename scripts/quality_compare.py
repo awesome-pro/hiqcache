@@ -1,4 +1,4 @@
-"""Phase 15 — numerical and generation quality of the INT8 L2 codec.
+"""Numerical and generation quality of the INT8 L2 codec.
 
 The capacity and latency results say nothing about what the lossy codec does to
 model output. This measures it directly, by running identical prompts through the

@@ -1,12 +1,12 @@
-"""Phase 12/13 experiment driver: run one configuration, capture labelled metrics.
+"""Experiment driver: run one configuration, capture labelled metrics.
 
 Design goal: make the pod run *one command per configuration*, with the
-phase boundary (idsle vs active) handled correctly. SGLang's HiCache counters are
+idle/active boundary handled correctly. SGLang's HiCache counters are
 cumulative process-lifetime values, so comparing two configurations naively
 includes server startup and warmup. This driver snapshots ``/metrics`` around the
 measured phase and reports deltas, while keeping absolute totals for context.
 
-Configurations (PROJECT.md Phase 12):
+Configurations:
 
     baseline   HiCache disabled entirely -- pure prefill recomputation
     bf16       standard SGLang HiCache, BF16 L2
@@ -91,7 +91,7 @@ def build_configs(
     target_l2_tokens: int | None = None,
     layer_num: int = 36,
 ) -> dict:
-    """The three Phase 12 configurations, sharing every non-codec setting."""
+    """The three benchmark configurations, sharing every non-codec setting."""
     common = [
         "--model-path", model,
         "--tp-size", str(tp),
@@ -204,7 +204,7 @@ class Workload:
 
 
 def build_workloads(args) -> dict:
-    """The Phase 13 workloads."""
+    """The benchmark workloads."""
     return {
         # Baseline sanity: modest reusable prefixes that fit either L2.
         "small": Workload(
@@ -379,25 +379,25 @@ def scrape_metrics(base_url: str) -> dict:
     return totals
 
 
-#: Metrics that matter, with the PROJECT.md phase each answers.
+#: Metrics that matter, grouped by the part of the L2 path each describes.
 TRACKED = {
-    "sglang:hicache_backup_bytes_total": "Phase 14 D2H: total backup bytes",
-    "sglang:hicache_backup_tokens_total": "Phase 14 D2H: tokens backed up",
-    "sglang:hicache_backup_duration_seconds": "Phase 14 D2H: total backup time",
-    "sglang:load_back_bytes_total": "Phase 14 H2D: total restore bytes",
-    "sglang:load_back_tokens_total": "Phase 14 H2D: tokens restored",
-    "sglang:load_back_duration_seconds": "Phase 14 H2D: total restore time",
-    "sglang:hicache_host_used_tokens": "Phase 14 storage: L2 tokens in use",
-    "sglang:hicache_host_total_tokens": "Phase 14 storage: L2 capacity",
-    "sglang:hicache_dropped_tokens_total": "Phase 14 storage: L2 evictions",
-    "sglang:cache_hit_rate": "Phase 14 serving: prefix cache hit rate",
-    "sglang:prompt_tokens_total": "Phase 14 serving: prefill tokens",
-    "sglang:generation_tokens_total": "Phase 14 serving: decode tokens",
+    "sglang:hicache_backup_bytes_total": "D2H: total backup bytes",
+    "sglang:hicache_backup_tokens_total": "D2H: tokens backed up",
+    "sglang:hicache_backup_duration_seconds": "D2H: total backup time",
+    "sglang:load_back_bytes_total": "H2D: total restore bytes",
+    "sglang:load_back_tokens_total": "H2D: tokens restored",
+    "sglang:load_back_duration_seconds": "H2D: total restore time",
+    "sglang:hicache_host_used_tokens": "storage: L2 tokens in use",
+    "sglang:hicache_host_total_tokens": "storage: L2 capacity",
+    "sglang:hicache_dropped_tokens_total": "storage: L2 evictions",
+    "sglang:cache_hit_rate": "serving: prefix cache hit rate",
+    "sglang:prompt_tokens_total": "serving: prefill tokens",
+    "sglang:generation_tokens_total": "serving: decode tokens",
 }
 
 
 def derive(metrics: dict) -> dict:
-    """Turn raw counters into the derived figures PROJECT.md asks for."""
+    """Turn raw counters into the derived capacity, transfer and bandwidth figures."""
     out = {}
     backup_bytes = metrics.get("sglang:hicache_backup_bytes_total", 0.0)
     backup_tokens = metrics.get("sglang:hicache_backup_tokens_total", 0.0)
@@ -560,7 +560,7 @@ def main() -> int:
     env = dict(os.environ)
     env.update(config.env)
     env["PYTHONPATH"] = f"{sglang_root / 'python'}:{env.get('PYTHONPATH', '')}"
-    # Codec phase timing for Phase 17. The INT8 pool records CUDA events around
+    # Codec timing, split by phase. The INT8 pool records CUDA events around
     # encode / decode / each mover call and writes totals on teardown, so this
     # file appears during shutdown rather than during the run. It decomposes the
     # L2 path: if encode+decode is negligible next to the D2H copy, fused Triton

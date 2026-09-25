@@ -1,4 +1,4 @@
-# SGLang integration — Phase 3 source map
+# SGLang integration — source map
 
 What was changed in the SGLang fork, why, and what the runtime contract is.
 
