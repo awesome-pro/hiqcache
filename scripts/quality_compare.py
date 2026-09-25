@@ -105,19 +105,32 @@ def shared_preamble(repeats: int, seed: int = 0) -> str:
     )
 
 
-def build_prompts(count: int, prefix_repeats: int) -> list[str]:
-    """The measured prompts: one long shared preamble plus a distinct question.
+def build_prompts(groups: int, per_group: int, prefix_repeats: int) -> list[str]:
+    """Prompts shaped like the workload that provably restores from L2.
 
-    Built in exactly one place on purpose. An earlier version built them here for
+    Experiment B restored 187,989 tokens with 32 distinct groups, each prefix
+    reused by 4 prompts, scattered through one 128-prompt stream. That reuse is
+    the mechanism: a prefix requested early is requested again much later, by
+    which time other traffic has evicted its device copy, so it loads back.
+
+    Every earlier shape here failed for the same reason. With one preamble shared
+    by all prompts the tree held a constant ~4,905 tokens and nothing was evicted.
+    With one distinct preamble per prompt, all 20 were sent and then immediately
+    re-sent, so they were still the most-recently-used nodes and matched in L1
+    (every match walk showed evicted=False on a node that already had a
+    host_value). Grouped prefixes reassemble the condition that works.
+
+    Built in exactly one place: an earlier version built the list here for
     sending and again inside run_config for populating, and the second copy
-    dropped the preamble -- so a 3,500-token prefix silently became ~25 tokens
-    and nothing was ever large enough to demote into L2. Two builders for the
-    same list is the bug; there is now one.
+    dropped the preamble -- silently turning a 3,500-token prefix into ~25.
     """
-    return [
-        shared_preamble(prefix_repeats, seed=i) + "\n\n" + build_prompt("general knowledge", q)
-        for i, (q, _) in enumerate(FACTS[:count])
-    ]
+    out: list[str] = []
+    for g in range(groups):
+        preamble = shared_preamble(prefix_repeats, seed=g)
+        for i in range(per_group):
+            q, _ = FACTS[(g * per_group + i) % len(FACTS)]
+            out.append(preamble + "\n\n" + build_prompt("general knowledge", q))
+    return out
 
 
 def post_generate(
@@ -540,7 +553,20 @@ def main() -> int:
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--host-size", type=float, default=2.0)
     parser.add_argument("--max-total-tokens", type=int, default=8192)
-    parser.add_argument("--prompts", type=int, default=20)
+    parser.add_argument(
+        "--groups",
+        type=int,
+        default=32,
+        help="Distinct prefixes. Experiment B used 32; 32 x 4 x 2048 = 65,536 "
+             "reusable tokens, well past a 16,384 L1 cap.",
+    )
+    parser.add_argument("--prompts-per-group", type=int, default=4)
+    parser.add_argument(
+        "--prefix-repeats",
+        type=int,
+        default=230,
+        help="~1.3 tokens per word, so 230 repeats is roughly a 2048-token prefix.",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=32)
     parser.add_argument(
         "--concurrency",
@@ -553,18 +579,6 @@ def main() -> int:
     )
     parser.add_argument("--filler-words", type=int, default=900)
     parser.add_argument("--filler-requests", type=int, default=40)
-    parser.add_argument(
-        "--prefix-repeats",
-        type=int,
-        default=300,
-        help=(
-            "Length of the deterministic preamble shared by every measured "
-            "prompt. It must be a large fraction of the L1 cap: short distinct "
-            "prompts give the radix tree nothing substantial to demote into L2, "
-            "so no restore ever happens. smoke_test.py uses 400 for exactly this "
-            "reason."
-        ),
-    )
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--startup-timeout", type=float, default=900.0)
     parser.add_argument("--sglang-root", default=str(REPO_ROOT.parent / "sglang"))
@@ -574,7 +588,7 @@ def main() -> int:
     configs = build_configs(
         args.model, args.host_size, 1, 1, max_total_tokens=args.max_total_tokens
     )
-    prompts = build_prompts(args.prompts, args.prefix_repeats)
+    prompts = build_prompts(args.groups, args.prompts_per_group, args.prefix_repeats)
 
     bf16 = run_config(args, configs["bf16"], prompts, tag="bf16")
     int8 = run_config(args, configs["int8"], prompts, tag="int8")

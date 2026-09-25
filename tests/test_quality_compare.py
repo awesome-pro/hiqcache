@@ -161,7 +161,7 @@ def test_real_capture_gives_the_guard_a_nonzero_denominator():
 
 
 def test_prompts_carry_a_long_preamble():
-    ps = build_prompts(20, 300)
+    ps = build_prompts(20, 1, 300)
     assert len(ps) == 20
     assert all(p.startswith(shared_preamble(300, seed=i)) for i, p in enumerate(ps))
     assert len(ps[0].split()) > 2000, "the preamble must dominate the prompt"
@@ -171,12 +171,28 @@ def test_every_prompt_gets_a_distinct_preamble():
     """Distinct preambles are what make the working set grow past L1. A shared
     one held the tree at a constant size, so nothing was ever evicted from the
     device and no restore could occur."""
-    ps = build_prompts(5, 50)
+    ps = build_prompts(5, 1, 50)
     preambles = {p[: len(shared_preamble(50))] for p in ps}
     assert len(preambles) == 5, "prompts must not share one prefix"
     assert shared_preamble(50, seed=0) != shared_preamble(50, seed=1)
 
 
 def test_prompts_still_differ_in_their_question():
-    ps = build_prompts(5, 20)
+    ps = build_prompts(5, 1, 20)
     assert len({p for p in ps}) == 5
+
+
+def test_grouped_prompts_share_a_prefix_within_a_group_only():
+    """The shape that makes restores happen: reuse inside a group, distinct
+    prefixes across groups."""
+    ps = build_prompts(groups=4, per_group=3, prefix_repeats=20)
+    assert len(ps) == 12
+    pre = shared_preamble(20, seed=0)
+    assert ps[0][: len(pre)] == ps[2][: len(pre)], "same group must share"
+    assert ps[0][: len(pre)] != ps[3][: len(pre)], "different groups must differ"
+
+
+def test_group_count_drives_the_reusable_working_set():
+    """32 groups x 4 x ~2048 tokens is what exceeded L1 in Experiment B."""
+    ps = build_prompts(groups=32, per_group=4, prefix_repeats=230)
+    assert len(ps) == 128
