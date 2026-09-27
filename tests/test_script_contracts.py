@@ -131,9 +131,15 @@ def test_bootstrap_uses_https_clone_urls():
 
 
 def test_bootstrap_does_not_require_write_back_jit():
-    """The pool rejects the page_first path, so that kernel is never called."""
-    source = _script("pod_bootstrap.sh").read_text()
-    assert "SGLANG_BUILD_RUST_EXTS=none" in source, (
+    """The pool rejects the page_first path, so that kernel is never called.
+
+    ``SGLANG_BUILD_RUST_EXTS=none`` skips the optional Rust radix-tree core, whose
+    build needs cargo, which the image does not ship. The flag belongs to the
+    SGLang install, which lives in the runbook rather than in the bootstrap
+    script, so that is where it has to stay documented.
+    """
+    runbook = REPO_ROOT / "docs" / "reproducing-on-a-pod.md"
+    assert "SGLANG_BUILD_RUST_EXTS=none" in runbook.read_text(), (
         "the Rust extensions are optional and need cargo, which the image lacks"
     )
 
