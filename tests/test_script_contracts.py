@@ -19,7 +19,10 @@ running the scripts, but they catch the recurring mechanical mistakes.
 from __future__ import annotations
 
 import ast
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -134,13 +137,57 @@ def test_bootstrap_does_not_require_write_back_jit():
     """The pool rejects the page_first path, so that kernel is never called.
 
     ``SGLANG_BUILD_RUST_EXTS=none`` skips the optional Rust radix-tree core, whose
-    build needs cargo, which the image does not ship. The flag belongs to the
-    SGLang install, which lives in the runbook rather than in the bootstrap
-    script, so that is where it has to stay documented.
+    build needs cargo, which the image does not ship. The flag is required rather
+    than cosmetic: ``setup.py`` calls cargo metadata while generating build
+    metadata, which happens before the filter is applied, so a cargo-less image
+    cannot even resolve ``pip install -e python`` without it.
+
+    The install lives in the runbook rather than in the bootstrap script, so that
+    is where the flag has to stay documented.
     """
     runbook = REPO_ROOT / "docs" / "reproducing-on-a-pod.md"
     assert "SGLANG_BUILD_RUST_EXTS=none" in runbook.read_text(), (
         "the Rust extensions are optional and need cargo, which the image lacks"
+    )
+
+
+def test_verify_sglang_diagnoses_a_missing_install(tmp_path):
+    """A bare ModuleNotFoundError is the wrong advice when SGLang is absent.
+
+    The install lands in site-packages on the container disk while the source at
+    /workspace/sglang survives a restart, so a pod that worked can come back
+    unable to import SGLang. This runs the script against an empty checkout and
+    asserts on what it prints, not on the source: the hint lives inside a bash
+    heredoc, so matching its text would be asserting on escaping rather than on
+    the advice a reader gets.
+    """
+    fake_root = tmp_path / "sglang"
+    (fake_root / "python" / "sglang").mkdir(parents=True)
+
+    proc = subprocess.run(
+        ["bash", str(_script("verify_sglang.sh")), "--tests-only"],
+        capture_output=True,
+        text=True,
+        # PY is the interpreter the script would use; point it at the one running
+        # this test, so the check works whether or not `python` is on PATH (it is
+        # not on many macOS setups, and the script dies earlier if it is missing).
+        env={**os.environ, "SGLANG_ROOT": str(fake_root), "PY": sys.executable},
+        timeout=120,
+    )
+    output = proc.stdout + proc.stderr
+
+    assert proc.returncode != 0, "the script must fail when SGLang is absent"
+    # Anchored on the command as printed, not on the flag alone: the flag is also
+    # named in the sentence below it, so a bare substring check passes even when
+    # the command itself has lost it, which is the failure worth catching.
+    joined = output.replace("\\\n        ", " ")
+    assert "SGLANG_BUILD_RUST_EXTS=none python -m pip install" in joined, (
+        "the reinstall hint must carry the flag, or pip's metadata generation "
+        "fails with a cargo error that reads as an unrelated problem"
+    )
+    assert "-e python" in output, "the hint must install the local checkout"
+    assert "download.pytorch.org/whl/cu130" in output, (
+        "torchaudio 2.11 beside torch 2.13 resolves only through PyTorch's index"
     )
 
 

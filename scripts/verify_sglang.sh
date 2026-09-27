@@ -43,12 +43,35 @@ fi
 
 # ---------------------------------------------------------------- importable
 say "SGLang is importable, and the INT8 flag exists"
-$PY - <<'PY' || die "SGLang import failed -- did the install complete?"
+$PY - <<'PY' || die "SGLang import failed -- see the diagnosis above"
 import sys
 try:
     from sglang.srt.environ import envs
 except Exception as exc:                                  # noqa: BLE001
     print(f"  cannot import sglang.srt.environ: {type(exc).__name__}: {exc}")
+    # The install lives in site-packages, which is on the container disk, while
+    # the source at /workspace/sglang survives a container restart. So a pod
+    # that worked earlier can come back unable to import SGLang.
+    print(f"  interpreter: {sys.executable}")
+    print(f"  prefix:      {sys.prefix}")
+    try:
+        import torch
+
+        print(f"  torch:       {torch.__version__} (cuda {torch.version.cuda})")
+    except Exception as torch_exc:                        # noqa: BLE001
+        print(f"  torch:       not importable either: {torch_exc}")
+    print()
+    print("  Re-install it from the checkout:")
+    print("    cd /workspace/sglang")
+    print(
+        "    SGLANG_BUILD_RUST_EXTS=none python -m pip install \\\n"
+        "        --extra-index-url https://download.pytorch.org/whl/cu130 -e python"
+    )
+    print()
+    print("  SGLANG_BUILD_RUST_EXTS=none is required, not optional: setup.py")
+    print("  calls cargo metadata while generating build metadata, before the")
+    print("  filter is applied, and this image has no cargo. Then confirm torch")
+    print("  still reads 2.13.0+cu130; if pip replaced it, the image is wrong.")
     sys.exit(1)
 print("  sglang imports OK")
 print("  SGLANG_EXPERIMENTAL_HICACHE_INT8 default:",
