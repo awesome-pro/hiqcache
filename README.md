@@ -30,6 +30,10 @@ performance claim.
 
 ---
 
+### SGLang PR - https://github.com/sgl-project/sglang/pull/41365
+
+---
+
 ## Results
 
 ### Experiment A: equal logical capacity
