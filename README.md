@@ -31,6 +31,7 @@ performance claim.
 ---
 
 ### SGLang PR - https://github.com/sgl-project/sglang/pull/41365
+### Artifact - https://abhinandan.one/artifacts/measuring-adaptive-speculative-decoding-in-sglang
 
 ---
 
