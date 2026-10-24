@@ -53,6 +53,7 @@ import hashlib
 import importlib.util
 import json
 import random
+import subprocess
 import sys
 import tempfile
 import types
@@ -179,6 +180,23 @@ def group_prefix_lengths(
     return out
 
 
+def _git_sha(path: Path) -> str | None:
+    """Commit SHA of a checkout, or None when it is not a git tree.
+
+    The manifest must be portable: a local absolute path says nothing to a
+    reader and leaks the author's filesystem. The SHA is the reproducible
+    identifier.
+    """
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def build_rows(args, tokenizer):
     """Regenerate the benchmark request list, in submit order."""
     gsp = load_gsp_module(Path(args.sglang_root).expanduser().resolve())
@@ -297,8 +315,11 @@ def main(argv: list[str] | None = None) -> int:
         "purpose": "exact token-id trace for the Experiment B workload",
         "source": {
             "dataset": "generated-shared-prefix",
-            "sglang_root": str(Path(args.sglang_root).resolve()),
-            "tokenizer": source,
+            # Record the commit, not the local checkout path: a manifest is
+            # provenance for other people, not a snapshot of one machine.
+            "sglang_sha": _git_sha(Path(args.sglang_root).expanduser().resolve()),
+            "tokenizer_id": args.tokenizer,
+            "tokenizer_files": "local directory" if args.tokenizer_dir else "hub",
             "tokenizer_class": type(tokenizer).__name__,
             "tokenizer_vocab_size": len(tokenizer),
             "tokenizer_json_sha256": (

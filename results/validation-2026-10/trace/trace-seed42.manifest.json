@@ -3,8 +3,9 @@
   "purpose": "exact token-id trace for the Experiment B workload",
   "source": {
     "dataset": "generated-shared-prefix",
-    "sglang_root": "/Users/abhinandan/Desktop/sglang-fork",
-    "tokenizer": "/tmp/qwen3-tok",
+    "sglang_sha": "89e0023e215a6d80b6cff0e3075e11067f2ff90d",
+    "tokenizer_id": "Qwen/Qwen3-8B",
+    "tokenizer_files": "local directory",
     "tokenizer_class": "Qwen2Tokenizer",
     "tokenizer_vocab_size": 151669,
     "tokenizer_json_sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"

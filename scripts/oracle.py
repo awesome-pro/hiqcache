@@ -61,6 +61,18 @@ INT8_ROW_BYTES = 1152
 INT8_BYTES_PER_TOKEN = 2 * LAYERS * INT8_ROW_BYTES  # 82,944
 
 
+def _display_path(path: Path) -> str:
+    """Repo-relative path when possible; a bare name otherwise.
+
+    The artifact is published, so it must not carry the author's home
+    directory. The trace itself is identified by its sha256 in the manifest.
+    """
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return path.name
+
+
 def load_trace(path: Path) -> list[dict]:
     rows = []
     with path.open() as f:
@@ -317,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "trace": {
-            "path": str(trace_path),
+            "path": _display_path(trace_path),
             "requests": len(rows),
             "total_prompt_tokens": total,
             "groups": len(prefix_lens),

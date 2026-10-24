@@ -119,6 +119,23 @@ rounding. BF16 reaches only ~77% of the same ceiling.
 This is the defensible form of the hit-rate claim: *the INT8 configuration
 saturates the reuse available in this trace; the BF16 configuration does not.*
 
+### Independent replay (2026-10-24)
+
+The same trace was replayed against the current fork tip (SGLang `89e0023`,
+torch 2.14.1+cu130) with the exact token ids at concurrency 8, no warmup:
+
+| config | replay hit rate | published (Experiment B) |
+| --- | ---: | ---: |
+| baseline (L1 only) | 12.05% | 12.2% |
+| BF16 HiCache | **57.57%** | 56.1% (repeats 57.6%) |
+| HiQCache INT8 | **71.97%** | 72.7% (repeats 72.7–73.4%) |
+
+The replay reproduces the published rates within 0.75 pp. INT8's 71.97% is
+**98.97% of the 72.72% ceiling**: it served 95 of the 96 reuse events, and the
+one miss is a concurrency overlap, not a codec loss. The published run served
+96/96. The replay is the independent check that the hit rate is a property of
+the trace and the capacity, not of one benchmark invocation.
+
 ---
 
 ## 4. Why 57–73% is not 95–99%
@@ -161,27 +178,43 @@ without changing a byte of the codec.
 
 ## 5. Capacity model: where the BF16 gap comes from
 
-The all-or-nothing model: a group's shared prefix is reusable only if it fits in
-L2. With 32 prefixes of mean 2,152.8 tokens:
+The model: the L2 holds `capacity / mean_prefix_tokens` prefixes' worth of
+bytes (~25 of the 32 shared prefixes for BF16, all 32 for INT8). Over the 96
+reuse events in the trace (`128 - 32` first-of-group prompts), the fraction
+served is therefore ~25/32 = 78% for BF16 and 100% for INT8.
 
-| pool | L2 tokens | prefixes that fit | predicted | observed |
+| pool | L2 tokens | prefix-slots | predicted | measured replay |
 | --- | ---: | ---: | ---: | ---: |
-| BF16 | 54,254 | **25 / 32** | 56.8% | 56.1% (repeats 57.6%) |
-| INT8 | 96,451 | **32 / 32** | 72.72% | 72.7% |
+| BF16 | 54,254 | ~25 / 32 | 56.8% | **57.57%** |
+| INT8 | 96,451 | 32 / 32 | 72.72% | **71.97%** |
 
-The model uses no fitted parameters and lands within ~0.7 pp of both measured
-rates. It explains the gap without invoking codec speed:
+The replay confirms the event-level arithmetic, not a whole-group-residency
+story. BF16 served **76 of 96** reuse events (79.2%, versus the 78.1% predicted),
+and the misses were spread across groups rather than concentrated:
 
-- BF16 can hold ~25 of the 32 shared prefixes, so ~7 groups' prefixes are not
-  resident when their later prompts arrive; those prompts recompute.
-- INT8 holds all 32, so every available reuse is served.
-- The 16.6-point hit-rate difference is therefore a **prefix-capacity** effect,
-  not a codec-accuracy effect.
+| prefix hits per group (of 4) | BF16 groups | INT8 groups |
+| ---: | ---: | ---: |
+| 0 | 1 | 0 |
+| 1 | 1 | 0 |
+| 2 | 15 | 1 |
+| 3 | 15 | 31 |
+| 4 | 0 | 0 |
 
-Caveat: this is a model. It ignores L1 residency (`--max-total-tokens 16384`),
+So BF16 does not lose ~7 groups entirely; it loses one or two reuses from many
+groups as LRU evicts prefixes between uses. INT8 loses one reuse in one group
+(95/96), consistent with a concurrency overlap rather than capacity: two prompts
+of the same group can be in flight at once, and the later one arrives before the
+earlier one's prefix is complete. That is one of the oracle's documented
+omissions.
+
+The 16.6-point hit-rate difference between BF16 and INT8 is therefore a
+**prefix-capacity** effect, not a codec-accuracy effect: the same 96 reuse
+opportunities exist, and BF16 can hold only ~79% of them.
+
+Caveat: the model ignores L1 residency (`--max-total-tokens 16384`),
 concurrency, `lock_ref` protection, and radix-tree eviction granularity. The
-per-request counters on the GPU are what validate it; the published single runs
-cannot.
+replay's per-request `cached_tokens_details` is what validates it; the published
+single runs cannot.
 
 A capacity sweep is included in `oracle.json` for 1–32 GB host pools. It is a
 model, not a measurement, and is labeled `"observed": false`.

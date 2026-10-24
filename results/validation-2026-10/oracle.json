@@ -1,6 +1,6 @@
 {
   "trace": {
-    "path": "/Users/abhinandan/Desktop/hiqcache/results/validation-2026-10/trace/trace-seed42.jsonl",
+    "path": "results/validation-2026-10/trace/trace-seed42.jsonl",
     "requests": 128,
     "total_prompt_tokens": 284198,
     "groups": 32,
