@@ -211,7 +211,8 @@
     "The replay INT8 hit rate is 71.97% against 72.7% published. The gap is one missed reuse event (95/96), from a concurrency overlap.",
     "Quality is one prompt and 16 tokens. It is a spot-check, not a benchmark accuracy result.",
     "The trace manifest records the SGLang commit and tokenizer file hash, not a local path.",
-    "Server, stdout and failed-attempt logs were not kept. The retained artifacts are the replay JSONs, microbench, quality captures, trace, oracle, summary and this manifest."
+    "Server, stdout and failed-attempt logs were not kept. The retained artifacts are the replay JSONs, microbench, quality captures, trace, oracle, summary and this manifest.",
+    "The saved microbench's BF16 transfer control copied the INT8 staging buffer and is marked invalid in microbench.json. The script now allocates a BF16 buffer; a rerun is needed."
   ],
   "pruned_artifacts": {
     "removed": [

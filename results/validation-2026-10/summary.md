@@ -101,8 +101,9 @@ D2H reaches 23.3 GB/s and H2D reaches 23.4 GB/s, or 74% of the 31.5 GB/s Gen4
 x16 theoretical link. The per-layer H2D path reaches 22.8 GB/s.
 
 Recomputing 2,152 tokens takes 1,352 ms at 1,592 tok/s. A restore is 16.1 ms,
-or 1.2% of that. Backup plus one restore is 38.9 ms, or 2.9%. The codec is not
-the bottleneck.
+or 1.2% of that. Backup plus one restore is 38.9 ms, or 2.9%. Within the
+restore, decode is 8.5 ms of the 16.1 ms. The in-server critical path was not
+measured.
 
 ## 5. Quality
 
@@ -120,8 +121,9 @@ then a re-send with output logprobs. Both configs reported `cached_tokens =
 
 The cold path is identical across the two server boots. A lossless BF16 restore
 changes logprobs by up to 0.0199 against a cold prefill, because the restored
-prefix takes a different attention and batching path. INT8's restored-prefix
-difference is 0.01117, below that floor. All 16 token ids and the full text are
+prefix takes a different attention and batching path. That is the reference
+difference on this sample. INT8's restored-prefix difference is 0.01117, below
+that reference. All 16 token ids and the full text are
 identical.
 
 This is one prompt and 16 greedy tokens. It is a spot-check, not a benchmark

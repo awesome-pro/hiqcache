@@ -20,10 +20,14 @@ events over 3 warmups and 10 repetitions. Host buffers are pinned.
 | `int8_d2h` | encoded GPU staging to pinned host arena, bulk and per layer |
 | `int8_h2d` | pinned host arena to GPU staging, bulk and per layer |
 | `decode_and_scatter` | unpack, dequantise, scatter into the BF16 device pool |
-| `bf16_d2h` / `bf16_h2d` | the same tokens as BF16, the control |
+| `bf16_d2h` / `bf16_h2d` | intended BF16 control; the saved run copied the INT8 buffer, so these numbers are invalid |
 
 Not measured: stream overlap with concurrent requests, the scheduler's critical
 path, and the JIT mover's instruction mix. A bulk `copy_` is used for bandwidth.
+
+The saved run's BF16 control is invalid. `microbench.json` marks it
+`invalid: true`. The script now allocates a BF16 buffer, but that version needs
+a rerun before BF16 and INT8 transfer speeds can be compared.
 
 ## 2. Results (p50, 10 reps)
 
@@ -64,8 +68,9 @@ Even a codec 10 times slower would be about 12% of the recompute cost. The
 measured 667 ms saving is smaller than 1,352 ms because the hit request still
 waits in the same queue.
 
-A fused Triton kernel would save at most the 8.5 ms of decode, or 15.1 ms of
-encode, per event. The codec is not the bottleneck.
+A fused kernel would save at most about 8.5 ms of decode per hit, against a
+1,352 ms recompute. The in-server critical path was not measured, so this is not
+yet a priority.
 
 ## 4. Quality
 
@@ -96,7 +101,7 @@ identical to the cold text. This is a real codec round trip.
 
 | comparison | token ids | text | mean abs(dlogprob) | max abs(dlogprob) |
 | --- | --- | --- | ---: | ---: |
-| BF16 cold vs BF16 restored (restore noise) | 16/16 | identical | 0.00318 | 0.01989 |
+| BF16 cold vs BF16 restored (restore reference) | 16/16 | identical | 0.00318 | 0.01989 |
 | INT8 cold vs INT8 restored (codec + restore) | 16/16 | identical | 0.00354 | 0.01965 |
 | BF16 cold vs INT8 cold (run control) | 16/16 | identical | 0.00000 | 0.00000 |
 | BF16 restored vs INT8 restored (codec) | 16/16 | identical | 0.00219 | 0.01117 |
@@ -107,9 +112,11 @@ identical to the cold text. This is a real codec round trip.
   exactly 0 for all 16 tokens.
 - A lossless BF16 restore changes logprobs by up to 0.02 against a cold prefill.
   The restored prefix goes through a different attention and batching path
-  (5,894 cached tokens plus 1 new token). That is the noise floor.
+  (5,894 cached tokens plus 1 new token). That is the reference difference on
+  this sample.
 - INT8 restored against BF16 restored has a maximum difference of 0.01117, below
-  the 0.01989 floor. All 16 token ids and the full text are identical.
+  the 0.01989 BF16 reference difference. All 16 token ids and the full text are
+  identical.
 - The codec's elementwise bound in the README is an input-space bound. This test
   checks whether the perturbation changes the output on this sample.
 

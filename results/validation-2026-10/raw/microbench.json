@@ -29,8 +29,8 @@
           "p95_ms": 2.1989760398864746,
           "p99_ms": 2.1989760398864746,
           "min_ms": 2.1596479415893555,
-          "gbps": 69.58240883814167,
-          "bytes": 150994944
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "bf16_h2d": {
           "n": 10,
@@ -39,8 +39,8 @@
           "p95_ms": 2.3957440853118896,
           "p99_ms": 2.3957440853118896,
           "min_ms": 2.2182400226593018,
-          "gbps": 67.73454762069515,
-          "bytes": 150994944
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "int8_d2h_bulk": {
           "n": 10,
@@ -128,8 +128,8 @@
           "p95_ms": 7.562240123748779,
           "p99_ms": 7.562240123748779,
           "min_ms": 7.246719837188721,
-          "gbps": 83.03981218569346,
-          "bytes": 603979776
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "bf16_h2d": {
           "n": 10,
@@ -138,8 +138,8 @@
           "p95_ms": 7.434432029724121,
           "p99_ms": 7.434432029724121,
           "min_ms": 7.227583885192871,
-          "gbps": 83.0562564083231,
-          "bytes": 603979776
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "int8_d2h_bulk": {
           "n": 10,
@@ -227,8 +227,8 @@
           "p95_ms": 7.68723201751709,
           "p99_ms": 7.68723201751709,
           "min_ms": 7.642528057098389,
-          "gbps": 82.95132528800133,
-          "bytes": 634650624
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "bf16_h2d": {
           "n": 10,
@@ -237,8 +237,8 @@
           "p95_ms": 8.125375747680664,
           "p99_ms": 8.125375747680664,
           "min_ms": 7.596992015838623,
-          "gbps": 83.10669721600486,
-          "bytes": 634650624
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "int8_d2h_bulk": {
           "n": 10,
@@ -326,8 +326,8 @@
           "p95_ms": 14.929056167602539,
           "p99_ms": 14.929056167602539,
           "min_ms": 14.506879806518555,
-          "gbps": 82.97957418427131,
-          "bytes": 1207959552
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "bf16_h2d": {
           "n": 10,
@@ -336,8 +336,8 @@
           "p95_ms": 14.961952209472656,
           "p99_ms": 14.961952209472656,
           "min_ms": 14.47225570678711,
-          "gbps": 83.0549765745425,
-          "bytes": 1207959552
+          "invalid": true,
+          "invalid_reason": "copied the INT8 staging buffer, not a BF16 buffer"
         },
         "int8_d2h_bulk": {
           "n": 10,
@@ -407,5 +407,9 @@
       "estimated_restore_ms": 23.857248306274414,
       "estimated_restore_gbps": 23.376287687509983
     }
+  },
+  "bf16_control": {
+    "valid": false,
+    "reason": "The saved run copied the INT8 staging buffer. The code now allocates a BF16 buffer; these timings need a rerun."
   }
 }

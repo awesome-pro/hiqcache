@@ -146,6 +146,25 @@ def main(argv: list[str] | None = None) -> int:
         gathered = torch.empty(
             (2 * LAYERS, n_tokens, HEADS, HEAD_DIM), device=device, dtype=torch.bfloat16
         )
+        # The BF16 control needs its own buffers. Copying the INT8 staging
+        # buffer and labelling it BF16 reports the wrong byte count and the
+        # wrong bandwidth.
+        bf16_src = torch.empty(
+            (2 * LAYERS, n_tokens, HEADS, HEAD_DIM),
+            device=device,
+            dtype=torch.bfloat16,
+        )
+        bf16_pinned = torch.empty(
+            (2 * LAYERS, n_tokens, HEADS, HEAD_DIM),
+            dtype=torch.bfloat16,
+            pin_memory=True,
+        )
+
+        def bf16_d2h():
+            bf16_pinned.copy_(bf16_src, non_blocking=True)
+
+        def bf16_h2d():
+            bf16_src.copy_(bf16_pinned, non_blocking=True)
 
         def index_select_only():
             for layer in range(2 * LAYERS):
@@ -192,8 +211,8 @@ def main(argv: list[str] | None = None) -> int:
 
         phases = {
             "index_select": index_select_only,
-            "bf16_d2h": d2h_bulk,
-            "bf16_h2d": h2d_bulk,
+            "bf16_d2h": bf16_d2h,
+            "bf16_h2d": bf16_h2d,
             "int8_d2h_bulk": d2h_bulk,
             "int8_h2d_bulk": h2d_bulk,
             "int8_d2h_per_layer": d2h_per_layer,
