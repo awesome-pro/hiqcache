@@ -1,0 +1,37 @@
+{
+  "generated_at": "2026-10-24T10:10:53.074630+00:00",
+  "purpose": "exact token-id trace for the Experiment B workload",
+  "source": {
+    "dataset": "generated-shared-prefix",
+    "sglang_root": "/Users/abhinandan/Desktop/sglang-fork",
+    "tokenizer": "/tmp/qwen3-tok",
+    "tokenizer_class": "Qwen2Tokenizer",
+    "tokenizer_vocab_size": 151669,
+    "tokenizer_json_sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+  },
+  "generation_args": {
+    "seed": 42,
+    "num_groups": 32,
+    "prompts_per_group": 4,
+    "system_prompt_len": 2048,
+    "question_len": 64,
+    "output_len": 32,
+    "range_ratio": 1.0,
+    "ordered": false,
+    "group_distribution": "uniform"
+  },
+  "requests": 128,
+  "total_prompt_tokens": 284198,
+  "expected_total": 284198,
+  "mean_prompt_len": 2220.296875,
+  "min_prompt_len": 2185,
+  "max_prompt_len": 2254,
+  "groups": 32,
+  "group_prefix_tokens": {
+    "min": 2121,
+    "max": 2181,
+    "mean": 2152.8125
+  },
+  "trace_sha256": "f5711019fab4bdcf5f73f280907e58a90ed4f54e5750d7e8c6b63aec55ce3cb9",
+  "note": "Nominal 2048+64 differs from the measured 284,198 because gen_prompt samples token ids, decodes to text, and re-encoding is not length-preserving; the trace records the real ids."
+}
