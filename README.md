@@ -9,248 +9,121 @@ restored to BF16 before attention consumes it.
 This changes the representation stored in L2 without changing SGLang's caching
 policy, radix tree, transfer engine, or existing CUDA HiCache mover.
 
-## Key results
+## Key Results
 
-Measured with **Qwen3-8B, TP=1 on one NVIDIA RTX A6000 48 GB**:
+| Finding | Evidence |
+| --- | --- |
+| **43.75% less CPU L2 memory per token** | 147,456 bytes/token (BF16) → **82,944 bytes/token** (INT8 + scales + padding) |
+| **1.78× more L2 tokens under an 8 GB host budget** | 54,254 BF16 → **96,451 INT8** tokens |
+| **72.72% ideal prefix-reuse ceiling for the benchmark trace** | Exact tokenized 128-request trace, sequential/unlimited-capacity trie oracle: 206,670 / 284,198 prompt tokens |
+| **57.57% → 71.97% cache-hit rate in an independent replay** | BF16 vs INT8, same trace, 8 concurrent requests; one run per configuration |
+| **Valid end-to-end L2 restore spot-check** | Both variants restored 1,797 tokens; 16 of 16 generated token IDs and the text matched |
+| **16.1 ms to restore a 2,152-token prefix** | 7.6 ms PCIe + 8.5 ms decode; 1.2% of the 1,352 ms recompute |
 
-- **43.75% less host KV memory per token:** 147,456 → 82,944 bytes
-- **1.78x L2 capacity at the same host-memory budget:** 54,254 → 96,451 tokens
-- In repeated fixed-budget runs:
-  - BF16 HiCache: ~57% cache-hit rate
-  - HiQCache INT8: ~73% cache-hit rate
-- HiQCache restored roughly **168K tokens from L2** versus ~125–127K with BF16
-  in the repeated fixed-budget workload
-- Real GPU → CPU → GPU compressed cache restores were validated end-to-end
-- The codec's elementwise numerical error bound was verified on CPU, CUDA, and MPS
+The main result is storage density: at a fixed host budget, the L2 holds 1.78x more tokens, which lets more repeated prefixes survive. Serving latency varies by run; the new replay has one run per configuration.
 
-The main result is the **capacity/reuse effect**. Serving latency improved
-substantially in 3 of 4 paired measurements and was near parity/slightly worse
-in one, so latency is reported as a secondary result rather than as a universal
-performance claim.
+The trace has 4 requests per shared prefix. The 32 first prompts are compulsory misses, and about 3% of each prompt is a unique question tail, so the ceiling is (4-1)/4 x 97.0% = 72.72%. BF16's L2 holds about 25 of 32 prefixes, so it serves 76 of 96 reuse events. INT8 serves 95.
 
----
-
-### SGLang PR - https://github.com/sgl-project/sglang/pull/41365
-### Artifact - https://abhinandan.one/artifacts/measuring-adaptive-speculative-decoding-in-sglang
+- [SGLang integration PR](https://github.com/sgl-project/sglang/pull/41365)
+- [Validation summary](results/validation-2026-10/summary.md), [Theory and oracle](docs/theory.md), [Overhead and quality](docs/overhead-and-quality.md)
+- [Raw artifacts and environment manifest](results/validation-2026-10/manifest.json)
 
 ---
 
-## Results
+## Cache capacity and experimental results
 
-### Experiment A: equal logical capacity
+### Geometry and encoded format
 
-Both configurations were pinned to the same **54,254-token L2 capacity**.
+For Qwen3-8B at TP=1, the tested geometry is **36 layers × 8 KV heads × 128 dimensions**, with K and V, BF16 active KV on the GPU.
 
-This isolates the amount of host memory required to hold the same logical cache.
+One BF16 K or V row requires `8 × 128 × 2 = 2,048` bytes. HiQCache encodes each corresponding row as:
 
-| Metric | BF16 HiCache | HiQCache INT8 |
-| --- | ---: | ---: |
-| L2 capacity | 54,254 tokens | 54,254 tokens |
-| L2 used | 53,710 | 53,514 |
-| Measured L2 bytes/token | 147,456 | **82,944** |
-| Host memory for that capacity | 8,000,077,824 B | **4,500,043,776 B** |
-| Host memory | 8.000 GB | **4.500 GB** |
-| Tokens backed up to L2 | 216,144 | 222,628 |
-| Tokens restored from L2 | 122,678 | 126,979 |
-| Benchmark cache-hit rate | 54.6% | 58.2% |
-| L2 evictions | 0 | 0 |
-
-The same logical cache fits in **56.25% of the host memory**:
-
-- **43.75% fewer bytes**
-- **1.7778x storage density**
-
-Both configurations reported:
-
-```text
-target L2 capacity == achieved L2 capacity == 54,254 tokens
+```
+0 … 1023       1,024 B  signed INT8 payload (8 heads × 128 values)
+1024 … 1039       16 B  eight BF16 scales (one scale per KV head)
+1040 … 1151      112 B  alignment padding
+──────────────────────────────────────────────────────────────────
+                  1,152 B per K or V row
 ```
 
-The storage result is determined directly by the encoded representation.
-The cache-hit-rate difference above is from one run and is not presented as an
-established performance effect.
+Per token, across all layers and K/V:
 
-Full experiment:
-[docs/experiment-a-results.md](docs/experiment-a-results.md)
-
----
-
-### Experiment B: equal physical budget
-
-Both HiCache configurations used the same:
-
-```text
---hicache-size 8
+```
+BF16:    2 × 36 × 2,048 = 147,456 bytes
+INT8 L2: 2 × 36 × 1,152 =  82,944 bytes
+Saving:  1 − 82,944 / 147,456 = 43.75%
+Capacity multiplier: 147,456 / 82,944 = 1.7778×
 ```
 
-| Metric | No L2 | BF16 HiCache | HiQCache INT8 |
+Pure BF16 → INT8 data would suggest 50% savings; the actual **43.75%** accounts for scales and padding. The 1,152-byte row is a multiple of 128 bytes to satisfy the existing HiCache byte-mover geometry. See [the design notes](docs/design.md).
+
+### Experiment A: equal logical L2 capacity
+
+Both variants hold **54,254 L2 tokens**. BF16 requires approximately **8.00 GB** of host storage, while the encoded INT8 representation needs approximately **4.50 GB**. This measures the memory needed for the same token capacity. It is not a latency experiment. The observed hit rates in one run differed (54.6% and 58.2%), and that difference is not an established codec effect.
+
+[Experimental detail](docs/experiment-a-results.md)
+
+### Experiment B: equal host-memory budget
+
+With `--hicache-size 8` (8 decimal GB), the original serving benchmark compared no reusable CPU L2, BF16 HiCache, and HiQCache INT8:
+
+| Metric | No CPU L2 | BF16 L2 | INT8 L2 |
 | --- | ---: | ---: | ---: |
-| L2 capacity | 0 | 54,254 | **96,451** |
-| L2 tokens used | 0 | 53,585 (98.8%) | 80,833 (83.8%) |
-| Measured L2 bytes/token |:  | 147,456 | **82,944** |
-| Backup bytes | 0 | 31.08 GiB | **6.24 GiB** |
-| Restore bytes | 0 | 17.44 GiB | **12.97 GiB** |
-| Cache-hit rate | 12.2% | 56.1% | **72.7%** |
-| Tokens served from L2 | 0 | 126,997 | **167,899** |
-| Mean TTFT | 1,643.0 ms | 1,244.3 ms | 922.3 ms |
-| p99 TTFT | 3,626.3 ms | 3,450.8 ms | 3,369.6 ms |
+| Host L2 capacity | 0 | 54,254 | **96,451** |
+| Cache-hit rate, benchmark | 12.2% | 56.1% | **72.7%** |
+| Tokens restored from host L2 | 0 | 126,997 | **167,899** |
+| Mean TTFT | 1,643 ms | 1,244 ms | 922 ms |
 | Mean TPOT | 47.9 ms | 37.0 ms | 33.3 ms |
 | Output throughput | 80.0 tok/s | 105.1 tok/s | 127.8 tok/s |
 
-In this representative run, compared with BF16 HiCache at the same host-memory
-budget, HiQCache:
+This is a **representative run, not a universal performance guarantee**. Across four earlier BF16/INT8 paired configurations, the storage/capacity effect was deterministic and the cache-hit effect repeated; TTFT improvements were less stable, with one near-parity/slightly worse run. The no-L2 baseline still has L1; its 12.2% is device-side reuse, not a cold cache.
 
-- increased L2 capacity from **54,254 → 96,451 tokens**
-- improved cache hit rate by **16.6 percentage points**
-- served **32% more tokens from L2**
-- reduced mean TTFT by 25.9%
-- increased output throughput by 21.6%
+[Original results and repetition details](docs/experiment-b-results.md)
 
-The capacity and byte-density results are exact properties of the two
-representations.
+### Independent replay (October 2026)
 
-The serving-latency result is more variable.
+The same trace was replayed with exact token ids at concurrency 8, one run per configuration:
 
-Across four paired fixed-budget measurements:
+| Metric | Baseline | BF16 | INT8 |
+| --- | ---: | ---: | ---: |
+| Hit rate | 12.05% | 57.57% | 71.97% |
+| TTFT mean | 2,046 ms | 1,229 ms | 990 ms |
+| TPOT mean | 60.1 ms | 42.7 ms | 39.9 ms |
+| ITL p99 | 1,043.9 ms | 444.4 ms | 118.8 ms |
 
-```text
-BF16 cache hit rate:
-56.8% – 57.6%
-
-HiQCache cache hit rate:
-72.7% – 73.4%
-```
-
-Mean TTFT:
-
-```text
-BF16:
-1,193 – 2,558 ms
-
-HiQCache:
-1,202 – 1,259 ms
-```
-
-Three of the four paired runs showed substantial TTFT improvement; one was near
-parity/slightly worse.
-
-HiQCache therefore showed substantially lower run-to-run TTFT variance in these
-measurements, but the project does **not** claim a universal latency speedup.
-
-Full experiment and all repeated measurements:
-[docs/experiment-b-results.md](docs/experiment-b-results.md)
+On the 20 requests INT8 serves from L2 but BF16 cannot, TTFT is 667 ms lower (95% CI -862 to -477). Requests that both hit are 262 ms lower, from less queueing. Requests that both miss differ by 56 ms (CI -235 to +341). The replay pod was slower than the published runs; compare within this table.
 
 ---
 
-## How it works
+## Data flow and quantization
 
-For Qwen3-8B at TP=1:
+For each `(layer, token, K-or-V, KV head)`, HiQCache uses symmetric absmax quantization, with a BF16 scale for each 128-value head:
 
-```text
-36 layers
-8 KV heads
-128 dimensions/head
-BF16 L1 KV
+```
+s = max(abs(x)) / 127
+q = clamp(round(float32(x) / float32(s)), -127, 127)
+x_restored = BF16(q * s)
 ```
 
-A normal BF16 K or V row contains:
+Special handling avoids division by zero for an all-zero head. Quantization happens when GPU KV is stored in CPU L2 and is reversed before attention consumes restored KV.
 
-```text
-8 heads × 128 values × 2 bytes
-= 2048 bytes
+**Backup (GPU → CPU L2)**
+
+```
+GPU BF16 KV → gather/encode into aligned GPU staging
+             → existing HiCache mover → compressed pinned CPU L2
 ```
 
-HiQCache stores that row in a fixed **1152-byte encoded record**:
+**Restore (CPU L2 → GPU)**
 
-```text
-L1:  GPU, BF16                     L2:  CPU, INT8 + BF16 scales, 82,944 B/token
-
-┌──────────────────────┐             ┌────────────────────────────────────┐
-│ K,V bf16             │ ──encode──► │   0 .. 1023  1024 B INT8 (8 x 128) │
-│ 2048 B per row       │             │ 1024 .. 1039  16 B: 8 BF16 scales  │
-│ 147,456 B per token  │ ◄─decode─── │ 1040 .. 1151  112 B padding        │
-└──────────────────────┘             └────────────────────────────────────┘
+```
+pinned CPU L2 → existing HiCache mover → GPU encoded staging
+              → unpack/dequantize/scatter → normal GPU BF16 KV → attention
 ```
 
----
+This is a storage-tier optimization, not a change to attention math, cache eviction policy, or the scheduler.
 
-## Quantization
-
-Quantization is symmetric and per KV head.
-
-For each 128-element head:
-
-```text
-s = max(|x|) / 127
-q = round(x / s)
-```
-
-with values clamped to signed INT8.
-
-Restoration is:
-
-```text
-x̂ = q · s
-```
-
-and the result is emitted as BF16 because the normal L1 attention path expects
-BF16 KV.
-
-The 1152-byte record size is deliberate:
-
-```text
-1152 = 9 × 128
-```
-
-SGLang's existing HiCache CUDA mover is a byte-copy kernel whose transfer element
-must satisfy the required alignment. Packing the INT8 payload, BF16 scales, and
-padding into one aligned record lets HiQCache continue using the existing mover
-without modifying its CUDA source.
-
-Detailed layout derivation, transfer geometry, and stream-safety constraints:
-[docs/design.md](docs/design.md)
-
----
-
-## Transfer path
-
-HiQCache compresses only the host-cache representation.
-
-### L1 → L2
-
-```text
-BF16 device KV
-      ↓
-quantize + pack on GPU
-      ↓
-encoded GPU staging
-      ↓
-existing HiCache CUDA byte mover
-      ↓
-compressed pinned CPU L2
-```
-
-### L2 → L1
-
-```text
-compressed pinned CPU L2
-      ↓
-existing HiCache CUDA byte mover
-      ↓
-encoded GPU staging
-      ↓
-unpack + dequantize
-      ↓
-ordinary BF16 device KV
-      ↓
-attention
-```
-
-The existing SGLang scheduler, radix cache, L2 transfer engine, and layer-loading
-event semantics remain responsible for cache policy and synchronization.
-
-HiQCache changes the representation stored in L2 rather than introducing a new
-cache policy.
+The codec has a verified *elementwise* representation-error bound described in [the design document](docs/design.md). An elementwise bound does **not** prove model-output equivalence.
 
 ---
 
@@ -262,16 +135,9 @@ The encoded format has a verified elementwise error bound:
 |x̂ − x| ≤ (0.5 + 2⁻⁸) · s + 2⁻⁸ · |x̂|
 ```
 
-The terms correspond to:
-
-| Term | Source |
-| --- | --- |
-| `0.5 · s` | round-to-nearest INT8 quantization |
-| `2⁻⁸ · s` | BF16 representation of the scale |
-| `2⁻⁸ · |x̂|` | BF16 decode into the L1 representation |
-
-`codec.verified_error_bound()` checks the implementation elementwise against an
-exact float64 reference quantizer.
+The three terms are the INT8 rounding, the BF16 scale, and the BF16 output
+rounding. `codec.verified_error_bound()` checks the implementation elementwise
+against an exact float64 reference quantizer.
 
 All tested elements satisfied the bound on:
 
@@ -279,289 +145,75 @@ All tested elements satisfied the bound on:
 - CUDA
 - Apple MPS
 
-For a Qwen3-8B-shaped 512-token batch, the largest observed normalized error was:
-
-```text
-|x̂ − x| / s = 0.934
-```
-
-Example measurements:
-
-| Input | max `|x̂−x|/s` | Mean absolute error | p99 |
-| --- | ---: | ---: | ---: |
-| `random_unit` | 0.934 | 0.0054 | 0.0156 |
-| `qwen3_8b_shaped` | 0.934 | 0.0054 | 0.0156 |
-| `random_large` | 0.928 | 5.36 | 16.0 |
-| `all_zeros` | 0.000 | 0 | 0 |
-| `exact_grid` | 0.000 | 0 | 0 |
+For a Qwen3-8B-shaped 512-token batch, the largest observed normalized error was
+0.934.
 
 ---
 
-## Validation
+## GPU overhead: preliminary standalone measurements
 
-The implementation was tested at several levels.
+The new validation includes CUDA-event timings on the RTX A6000 for PyTorch encode/decode operations and **standalone bulk `copy_` transfers to/from pinned host buffers**. These are **not timings of the complete SGLang L2 scheduler/mover critical path**. The saved run's BF16 control copied the INT8 staging buffer and is marked invalid in `microbench.json`. The code now allocates a BF16 buffer, but the control has not been rerun.
 
-### Representation
+For an approximately 2,152-token prefix, the standalone INT8 medians (3 warmups, 10 measured repetitions) are: encode 15.11 ms, H2D 7.64 ms, decode and scatter 8.46 ms, and 16.10 ms for H2D plus decode. Backup (encode plus D2H) is 22.8 ms.
 
-The host-cache byte accounting matches the layout exactly:
+The compressed copy moved 178.5 MB at an effective bulk-copy rate near 23.4 GB/s in that standalone test. **16.10 ms is a phase-sum estimate, not an instrumented end-to-end SGLang restore latency.** Recomputing the same prefix takes 1,352 ms, so the restore is 1.2% of that. The saved BF16 baseline is invalid; a rerun is needed.
 
-```text
-BF16:
-147,456.00 measured bytes/token
+The measurements show that **encode/decode costs are substantial relative to compressed-transfer time**. Whether a fused kernel pays off depends on the actual serving critical path, overlap, and workload; the current measurements do not justify claiming that codec optimization is unnecessary.
 
-HiQCache:
-82,944.00 measured bytes/token
-```
+[Overhead experiment, assumptions, and limitations](docs/overhead-and-quality.md), [Raw microbenchmark](results/validation-2026-10/raw/microbench.json)
 
-These values were observed from real HiCache backup traffic rather than inferred
-only from configuration.
+## Correctness and output-quality spot-check
 
-### Real L2 restoration
+The codec's numerical tests verify elementwise error bounds on CPU, CUDA, and MPS. The new validation also repaired a quality-test issue: asking SGLang for full prompt logprobs (`logprob_start_len=0`) caused the test to bypass the intended prefix-cache restore. Output-logprob-only capture uses `logprob_start_len=-1` for the relevant tested runtime.
 
-The compressed path was exercised end-to-end on an RTX A6000.
+A **forced-L2-restore smoke test** exercised one 5,895-token prompt with controlled filler traffic. Both BF16 and INT8 variants restored **1,797 tokens** from host memory, with 5,894 cached prompt tokens for that request. In this one test:
 
-One smoke test observed:
+- All **16 generated greedy token IDs** matched between the BF16-restored and INT8-restored responses, and the generated text matched.
+- The maximum absolute *chosen-output-token* logprob difference between restored variants was approximately **0.01117**.
+- A cold-versus-BF16-restored comparison showed a maximum difference of 0.01989; those differences should **not** be treated as a statistically established noise floor or as proof that lossy quantization is harmless.
 
-```text
-1,797 tokens loaded back from L2
-tree state:
-evicted=True
-backuped=True
-host_value=1797
-```
+This shows the compressed path was exercised in a **limited generation spot-check**. It does not show that accuracy is preserved across diverse tasks, sampling modes, models, or long outputs. The wider multi-prompt quality experiment did **not** complete successfully and remains open.
 
-The INT8 host pool reported:
-
-```text
-82,944 B/token
-```
-
-while the BF16 control reported:
-
-```text
-147,456 B/token
-```
-
-The restored request completed through the normal BF16 attention path.
-
-### Fixed-budget serving
-
-Repeated Experiment B runs reproduced the capacity and cache-reuse effect:
-
-```text
-BF16:
-~57% cache-hit rate
-
-HiQCache:
-~73% cache-hit rate
-```
-
-under the same 8 GB host-memory budget.
+[Quality methodology and raw evidence](docs/overhead-and-quality.md)
 
 ---
 
-## Limitations
+## Known limitations and next work
 
-### End-to-end model quality
+- **Fixed layout:** The current record targets Qwen3-8B's 8 local KV heads, 128-dimensional heads, TP=1, page size 1, and BF16 GPU KV. Other TP configurations, MLA, hybrid architectures, and additional backends need separate engineering and validation.
+- **Quality scope:** One forced-restore prompt with 16 greedy output tokens is insufficient for downstream quality or high-confidence numerical impact claims.
+- **Performance scope:** Serving-latency measurements are sensitive to workload and environment. The new replay has one run per configuration; its p95/p99 TTFT results did not improve in that single run.
+- **Transfer-method scope:** The microbenchmark uses standalone pinned-memory copies, not the full in-server HiCache mover critical path. Its saved BF16 control is invalid; a rerun is needed.
+- **Workload scope:** The only *GPU-measured* workloads are concentrated around one repeated-prefix shape. A working-set, concurrency, context-length, and additional-model sweep would characterize the cross-over region and generality.
+- **Missing complete overhead attribution:** Collect in-server encode/transfer/decode critical-path traces and validate overlap before introducing a fused Triton implementation.
 
-End-to-end generation-quality impact after a lossy L2 restore has **not** been
-established.
-
-`scripts/quality_compare.py` was built to compare:
-
-- first-token agreement
-- generated-token sequence agreement
-- output-logprob deltas
-
-between BF16 and INT8 restoration.
-
-However, the recorded quality experiment did not successfully exercise the L2
-read path:
-
-```text
-bf16_load_back_tokens = 0
-int8_load_back_tokens = 0
-```
-
-so those requests were cold-prefilled rather than restored through the codec.
-
-The invalid result is preserved as:
-
-```text
-results/quality_INVALID_no_l2_restores.json
-```
-
-and the harness now refuses to report quality results when no L2 restoration is
-observed.
-
-What **is** established:
-
-- real compressed D2H/H2D cache restoration executes
-- the encoded representation is measured at 82,944 B/token
-- the elementwise codec error bound is verified
-
-What is **not** established:
-
-> how that numerical error propagates through Qwen3-8B's 36 transformer layers
-> into final token choices or downstream benchmark accuracy.
-
----
-
-### Serving latency
-
-Serving latency is not presented as a stable universal improvement.
-
-Across four paired Experiment B measurements:
-
-```text
-INT8 mean TTFT:
-1,202 – 1,259 ms
-
-BF16 mean TTFT:
-1,193 – 2,558 ms
-```
-
-Three paired runs favored HiQCache substantially, while one was near
-parity/slightly worse.
-
-The stable result is the increased host-cache capacity and cache reuse, not a
-specific latency percentage.
-
-The workload used:
-
-```text
-32 shared-prefix groups
-~2048-token configured shared-prefix target
-concurrency 8
-L1 capped at 16,384 tokens
-```
-
-The workload crossover point at which extra capacity ceases to compensate for
-codec overhead has not been characterized.
-
----
-
-### Codec phase timing
-
-Separate encode/decode phase timing was not successfully collected.
-
-The benchmark therefore does not make claims such as:
-
-- codec overhead is negligible
-- quantization is faster than PCIe transfer
-- Triton fusion would or would not improve performance
-
-The codec remains implemented with PyTorch GPU operations.
-
-A fused Triton implementation was intentionally not added without profiling
-evidence that the codec itself is the dominant bottleneck.
-
----
-
-### Scope
-
-The current encoded format targets:
-
-```text
-Qwen3-8B
-TP = 1
-8 local KV heads
-head_dim = 128
-page_size = 1
-BF16 L1
-MHA/GQA
-```
-
-The fixed record contains:
-
-```text
-1024 B INT8 payload
-16 B BF16 scales
-112 B alignment padding
-```
-
-At TP=2, only four KV heads would be local, so the payload, scale block,
-alignment, storage arithmetic, and transfer geometry would all change.
-
-Unsupported local-head geometries therefore fail at construction rather than
-silently using the TP=1 format.
-
-HiQCache does not currently target:
-
-- TP > 1
-- MLA
-- SSM / Mamba
-- page sizes > 1
-- L3 / remote HiCache storage
-- P/D disaggregation
-- speculative-draft cache pools
-- ROCm / NPU-specific integration
-
----
+The next steps are to rerun the BF16 control with the fixed code, profile actual in-server L2 events, run multiple independent repetitions, and expand the forced-restore generation-quality evaluation. A Triton optimization or model port should wait for those measurements.
 
 ## Reproducing
 
-Full GPU setup and experiment instructions:
+Start with [the pod setup guide](docs/reproducing-on-a-pod.md). The original fixed-budget and equal-capacity results and their raw artifacts are unchanged. October validation data resides under [`results/validation-2026-10/`](results/validation-2026-10/).
 
-[docs/reproducing-on-a-pod.md](docs/reproducing-on-a-pod.md)
-
-The main experiments are reproducible from the scripts in this repository and
-the accompanying SGLang fork.
-
-For local tests without a GPU:
+For offline checks:
 
 ```bash
-.venv/bin/python -m pytest tests/ -q
-.venv/bin/python scripts/capacity_table.py --hicache-size 8
-.venv/bin/python scripts/conformance.py generate --device cpu
+python -m pytest tests/ -q
+python scripts/capacity_table.py --hicache-size 8
+python scripts/oracle.py \
+  --trace results/validation-2026-10/trace/trace-seed42.jsonl \
+  --out results/validation-2026-10/oracle.json \
+  --md results/validation-2026-10/oracle.md
 ```
 
-Tests locate the SGLang fork through a sibling `sglang/` checkout by default.
+For the GPU experiments, use the pinned SGLang fork revision and a compatible CUDA/PyTorch environment, then run the [replay](scripts/replay_trace.py), [microbenchmark](scripts/microbench_codec.py), and [forced-restore smoke test](scripts/smoke_test.py). Preserve the exact software revision, hardware, workload, and raw logs for new measurements. The October validation used a newer SGLang/PyTorch environment than the original published results; see the [manifest](results/validation-2026-10/manifest.json) for details.
 
-Override it with:
-
-```bash
-export HIQCACHE_SGLANG_ROOT=/path/to/sglang
-```
-
-Enable the experimental host representation with:
+The INT8 host representation is experimental and disabled by default:
 
 ```bash
 export SGLANG_EXPERIMENTAL_HICACHE_INT8=1
 ```
 
-Integration details and fail-fast restrictions:
+For codec-format details and integration constraints, see [design](docs/design.md), [SGLang integration](docs/sglang-integration.md), and [HiCache internals](docs/hicache-internals.md).
 
-[docs/sglang-integration.md](docs/sglang-integration.md)
-
-SGLang HiCache source trace:
-
-[docs/hicache-internals.md](docs/hicache-internals.md)
-
-Image/environment compatibility:
-
-[docs/image-compatibility.md](docs/image-compatibility.md)
-
----
-
-## Experimental provenance
-
-Serving experiments used **Qwen3-8B at TP=1 on one NVIDIA RTX A6000 48 GB**.
-
-Experiment A and Experiment B were measured from pinned SGLang fork revisions.
-Some commit identifiers were rewritten later while cleaning the development
-history; the raw experiment artifacts were preserved unchanged.
-
-The exact old/new commit mapping and software/hardware provenance are recorded in:
-
-- [docs/experiment-a-results.md](docs/experiment-a-results.md)
-- [docs/experiment-b-results.md](docs/experiment-b-results.md)
-- [`results/`](results/)
-
-The raw result files are the source of truth for reported measurements.
-
----
-
-## Licence
+## License
 
 Apache-2.0. See [LICENSE](LICENSE).

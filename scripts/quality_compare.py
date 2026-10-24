@@ -4,8 +4,8 @@ The capacity and latency results say nothing about what the lossy codec does to
 model output. This measures it directly, by running identical prompts through the
 BF16 and INT8 configurations and comparing:
 
-  * generation agreement — first token, and the whole sequence
-  * chosen-token logprob deltas — mean / p95 / p99 / max
+  * generation agreement: first token, and the whole sequence
+  * chosen-token logprob deltas: mean / p95 / p99 / max
   * (optionally) a small task subset
 
 Getting the L2 path exercised matters. Prefix caching on a warm server can serve
@@ -160,7 +160,12 @@ def post_generate(
     }
     if logprob:
         body["return_logprob"] = True
-        body["logprob_start_len"] = 0
+        # -1 = output logprobs only. logprob_start_len=0 asks the server for
+        # FULL input logprobs, which forces a prefill and bypasses the prefix
+        # cache: the re-sent prompt then matches nothing and L2 is never read.
+        # That was the real cause of every zero-restore quality run; the
+        # comparison only needs the generated tokens' logprobs.
+        body["logprob_start_len"] = -1
         body["top_logprobs_num"] = 1
     req = urllib.request.Request(
         f"{base_url}/generate",
@@ -429,7 +434,10 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         # so re-sending them must restore. Filler on top only pushes them back
         # out of L2 -- measured: 116,142 tokens demoted, L2 down to 12,210 of
         # 13,564, and every re-sent prompt matched a node with no host value.
-        skip_filler = prefix_tokens * len(prompts_to_send) > l1_cap
+        skip_filler = (
+            not getattr(args, "force_filler", False)
+            and prefix_tokens * len(prompts_to_send) > l1_cap
+        )
         if skip_filler:
             print(f"    populate overflows L1 "
                   f"({prefix_tokens * len(prompts_to_send):,.0f} > {l1_cap:,.0f} "
@@ -446,8 +454,19 @@ def run_config(args, config, prompts, *, tag: str) -> dict:
         per_request = max(20, args.filler_words)
         sent_tokens = lo if skip_filler else 0.0
         requests_sent = 0
+        # Filler must be a SHARED-PREFIX CHAIN, not a set of unrelated prompts.
+        # Unrelated filler lets the radix tree burst far past the L1 cap, and a
+        # node that is evicted before its D->H backup is a DEAD node:
+        # _match_prefix_helper refuses to descend past
+        # `child.evicted and not child.backuped`, so a later re-send matches 0
+        # even though hicache_host_used_tokens is non-zero. That is the failure
+        # measured with the old filler: 19,256 tokens in L2, `#cached-token: 0`
+        # on every re-send. A shared prefix keeps the tree in the steady state
+        # the demote path is designed for, which is why smoke_test.py restores
+        # reliably with the same write_back policy.
+        filler_shared = " ".join(str(j) for j in range(max(64, per_request // 2)))
         for i in range(0 if skip_filler else args.filler_requests):
-            body = " ".join(f"f{i}w{j}" for j in range(per_request))
+            body = f"{filler_shared} tail {i}"
             try:
                 payload = post_generate(
                     base_url,
@@ -599,6 +618,20 @@ def main() -> int:
     )
     parser.add_argument("--filler-words", type=int, default=900)
     parser.add_argument("--filler-requests", type=int, default=40)
+    parser.add_argument(
+        "--force-filler",
+        action="store_true",
+        help="Send filler even when the populate overflows L1. Needed for a "
+             "small prompt set whose working set still fits in L2; without it "
+             "the last prompts stay in L1 and are not codec restores.",
+    )
+    parser.add_argument(
+        "--repeat-bf16",
+        action="store_true",
+        help="Run BF16 a second time and compare the two BF16 generation sets. "
+             "That is the nondeterminism negative control: any INT8-vs-BF16 "
+             "delta smaller than this is not attributable to the codec.",
+    )
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--startup-timeout", type=float, default=900.0)
     parser.add_argument("--sglang-root", default=str(REPO_ROOT.parent / "sglang"))
@@ -612,14 +645,28 @@ def main() -> int:
 
     bf16 = run_config(args, configs["bf16"], prompts, tag="bf16")
     int8 = run_config(args, configs["int8"], prompts, tag="int8")
+    bf16_repeat = (
+        run_config(args, configs["bf16"], prompts, tag="bf16-repeat")
+        if args.repeat_bf16
+        else None
+    )
 
     result = compare(bf16["generations"], int8["generations"])
     result["bf16_load_back_tokens"] = bf16.get("load_back_tokens", 0.0)
     result["int8_load_back_tokens"] = int8.get("load_back_tokens", 0.0)
+    if bf16_repeat is not None:
+        # Negative control: two BF16 runs, same prompts, same codec (none).
+        # Any difference here is scheduling/nondeterminism, not quantisation.
+        result["bf16_repeat_control"] = compare(
+            bf16["generations"], bf16_repeat["generations"]
+        )
+        result["bf16_repeat_load_back_tokens"] = bf16_repeat.get(
+            "load_back_tokens", 0.0
+        )
 
     out = Path(args.json) if args.json else REPO_ROOT / "results" / "quality.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"summary": result, "bf16": bf16, "int8": int8}, indent=2) + "\n")
+    out.write_text(json.dumps({"summary": result, "bf16": bf16, "int8": int8, "bf16_repeat": bf16_repeat}, indent=2) + "\n")
 
     # Validity before numbers. An earlier run captured no tokens at all and still
     # printed "100% full-sequence agreement", because [] == [] is a match and
@@ -654,6 +701,18 @@ def main() -> int:
         print(f"  |dlogprob| max       {result['max_abs_delta']:>12.5f}")
     else:
         print("  logprobs unavailable -- agreement only (see the raw dumps)")
+    if "bf16_repeat_control" in result:
+        c = result["bf16_repeat_control"]
+        # The negative control: two BF16 runs cannot differ because of the
+        # codec. If this is not ~100%/0, the prompt set is not deterministic
+        # enough to attribute a BF16-vs-INT8 difference to quantisation.
+        print("\n  BF16 vs BF16 repeat control (nondeterminism floor)")
+        print(f"    first-token agreement {c['first_token_agreement']:>8.1%}")
+        print(f"    full-seq agreement    {c['full_sequence_agreement']:>8.1%}")
+        if "max_abs_delta" in c:
+            print(f"    |dlogprob| max        {c['max_abs_delta']:>8.5f}")
+        print(f"    L2 restored (repeat)  {result.get('bf16_repeat_load_back_tokens', 0.0):>8,.0f} tokens")
+
     print("\n  Both configs restored from L2 before these generations were")
     print("  recorded, so the comparison is of codec-round-tripped KV.")
     print(f"\n  wrote {out}")

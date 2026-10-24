@@ -1,0 +1,384 @@
+{
+  "config": "bf16",
+  "expected_bytes_per_token": 147456,
+  "sglang_root": "/workspace/sglang",
+  "env": {
+    "SGLANG_EXPERIMENTAL_HICACHE_INT8": "0"
+  },
+  "startup_seconds": 61.11185264587402,
+  "model_info": {
+    "model_path": "Qwen/Qwen3-8B",
+    "served_model_name": "Qwen/Qwen3-8B",
+    "tokenizer_path": "Qwen/Qwen3-8B",
+    "is_generation": true,
+    "preferred_sampling_params": null,
+    "weight_version": "default",
+    "load_format": "auto",
+    "reasoning_parser": null,
+    "tool_call_parser": null,
+    "disaggregation_mode": "null",
+    "has_image_understanding": false,
+    "has_audio_understanding": false,
+    "model_type": "qwen3",
+    "architectures": [
+      "Qwen3ForCausalLM"
+    ],
+    "embedding": {
+      "family": "none",
+      "task": "none",
+      "execution": "none",
+      "attention": "none",
+      "pooling": "model_defined",
+      "normalize": false,
+      "postprocessor": "none",
+      "tokenizer_special_tokens": "model_default",
+      "supports_dimensions": false,
+      "supports_token_embeddings": false,
+      "supports_multimodal": false,
+      "requires_embedding_flag": false,
+      "auto_enable_embedding": false,
+      "bcg_eligibility": "disabled",
+      "safe_disable_kv_cache": false,
+      "safe_disable_radix_cache": false,
+      "safe_disable_chunked_prefill": false,
+      "enabled": false,
+      "matryoshka_dimensions": [],
+      "bcg": {
+        "prefill_backend": "breakable",
+        "enabled": true,
+        "capture_token_budget": 4096,
+        "capture_batch_sizes": [
+          4,
+          8,
+          12,
+          16,
+          20,
+          24,
+          28,
+          32,
+          48,
+          64,
+          80,
+          96,
+          112,
+          128,
+          144,
+          160,
+          176,
+          192,
+          208,
+          224,
+          240,
+          256,
+          288,
+          320,
+          352,
+          384,
+          416,
+          448,
+          480,
+          512,
+          576,
+          640,
+          704,
+          768,
+          832,
+          896,
+          960,
+          1024,
+          1280,
+          1536,
+          1792,
+          2048,
+          2304,
+          2560,
+          2816,
+          3072,
+          3328,
+          3584,
+          3840,
+          4096
+        ]
+      },
+      "cache": {
+        "kv_cache_disabled": false,
+        "radix_cache_disabled": false,
+        "chunked_prefill_disabled": false
+      }
+    }
+  },
+  "l1_token_capacity": 8192.0,
+  "l2_token_capacity": 13564.0,
+  "l2_expected_capacity": 13564,
+  "first_generation": {
+    "text": "Hello!\n\nOkay, so I need to figure out what the user is asking for"
+  },
+  "first_response": {
+    "text": " Hello!\n\nOkay, so I need to figure out what the user is asking for",
+    "output_ids": null,
+    "output_token_logprobs": [
+      [
+        -0.017498984932899475,
+        21927,
+        null
+      ],
+      [
+        -0.25360870361328125,
+        2219,
+        null
+      ],
+      [
+        -0.6013278365135193,
+        32313,
+        null
+      ],
+      [
+        -0.0039288015104830265,
+        11,
+        null
+      ],
+      [
+        -1.051009178161621,
+        773,
+        null
+      ],
+      [
+        -0.1621052622795105,
+        358,
+        null
+      ],
+      [
+        -0.01098501868546009,
+        1184,
+        null
+      ],
+      [
+        -1.1920928244535389e-07,
+        311,
+        null
+      ],
+      [
+        -0.05148923024535179,
+        7071,
+        null
+      ],
+      [
+        -1.1444026313256472e-05,
+        700,
+        null
+      ],
+      [
+        -0.7403786182403564,
+        1128,
+        null
+      ],
+      [
+        -0.02736186981201172,
+        279,
+        null
+      ],
+      [
+        -0.0012171011185273528,
+        1196,
+        null
+      ],
+      [
+        -0.04865841194987297,
+        374,
+        null
+      ],
+      [
+        -0.0010825494537129998,
+        10161,
+        null
+      ],
+      [
+        -0.6933072805404663,
+        369,
+        null
+      ]
+    ],
+    "prompt_tokens": 5895,
+    "completion_tokens": 16,
+    "cached_tokens": 1,
+    "cached_tokens_details": {
+      "device": 1,
+      "host": 0
+    }
+  },
+  "filler_requests_sent": 80,
+  "filler_requests_failed": 0,
+  "backup_tokens": 1826.0,
+  "backup_bytes": 269254656.0,
+  "measured_backup_bytes_per_token": 147456.0,
+  "final_response": {
+    "text": " Hello!\n\nOkay, so I need to figure out what the user is asking for",
+    "output_ids": null,
+    "output_token_logprobs": [
+      [
+        -0.017409835010766983,
+        21927,
+        null
+      ],
+      [
+        -0.24634239077568054,
+        2219,
+        null
+      ],
+      [
+        -0.6026907563209534,
+        32313,
+        null
+      ],
+      [
+        -0.003541033947840333,
+        11,
+        null
+      ],
+      [
+        -1.0507837533950806,
+        773,
+        null
+      ],
+      [
+        -0.18199968338012695,
+        358,
+        null
+      ],
+      [
+        -0.009697353467345238,
+        1184,
+        null
+      ],
+      [
+        -1.1920928244535389e-07,
+        311,
+        null
+      ],
+      [
+        -0.05080227553844452,
+        7071,
+        null
+      ],
+      [
+        -1.1444026313256472e-05,
+        700,
+        null
+      ],
+      [
+        -0.7348548769950867,
+        1128,
+        null
+      ],
+      [
+        -0.02656712755560875,
+        279,
+        null
+      ],
+      [
+        -0.0012168630491942167,
+        1196,
+        null
+      ],
+      [
+        -0.06204637885093689,
+        374,
+        null
+      ],
+      [
+        -0.001082073082216084,
+        10161,
+        null
+      ],
+      [
+        -0.6932876110076904,
+        369,
+        null
+      ]
+    ],
+    "prompt_tokens": 5895,
+    "completion_tokens": 16,
+    "cached_tokens": 5894,
+    "cached_tokens_details": {
+      "device": 4097,
+      "host": 1797
+    }
+  },
+  "final_request_prefill": {
+    "seqs": 1,
+    "new_tokens": 1,
+    "cached_tokens": 5894
+  },
+  "prefill_history_tail": [
+    {
+      "seqs": 1,
+      "new_tokens": 8,
+      "cached_tokens": 1692
+    },
+    {
+      "seqs": 1,
+      "new_tokens": 8,
+      "cached_tokens": 1692
+    },
+    {
+      "seqs": 1,
+      "new_tokens": 1,
+      "cached_tokens": 5894
+    }
+  ],
+  "load_back_tokens_delta": 1797.0,
+  "second_generation": {
+    "text": "Hello!\n\nOkay, so I need to figure out what the user is asking for"
+  },
+  "metrics_after": {
+    "sglang:hicache_backup_bytes_total": 455491584.0,
+    "sglang:hicache_backup_tokens_total": 3089.0,
+    "sglang:load_back_bytes_total": 264978432.0,
+    "sglang:load_back_tokens_total": 1797.0,
+    "sglang:hicache_host_used_tokens": 3066.0,
+    "sglang:hicache_host_total_tokens": 13564.0,
+    "sglang:hicache_dropped_tokens_total": 0.0,
+    "sglang:max_total_num_tokens": 8192.0
+  },
+  "server_log_tail": "[2026-10-24 11:22:18] Decode batch, #running-req: 1, #token: 1714, token usage: 0.21, cuda graph: True, gen throughput (token/s): 32.61, #queue-req: 0\n[2026-10-24 11:22:18] INFO:     127.0.0.1:49160 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:18] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.23\n[2026-10-24 11:22:19] INFO:     127.0.0.1:49164 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:19] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 16.97\n[2026-10-24 11:22:19] INFO:     127.0.0.1:49168 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:19] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.08\n[2026-10-24 11:22:19] Decode batch, #running-req: 1, #token: 1709, token usage: 0.21, cuda graph: True, gen throughput (token/s): 31.66, #queue-req: 0\n[2026-10-24 11:22:19] INFO:     127.0.0.1:49180 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:20] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.05\n[2026-10-24 11:22:20] INFO:     127.0.0.1:49196 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:20] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 16.98\n[2026-10-24 11:22:20] INFO:     127.0.0.1:49210 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:20] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.12\n[2026-10-24 11:22:21] Decode batch, #running-req: 1, #token: 1704, token usage: 0.21, cuda graph: True, gen throughput (token/s): 31.59, #queue-req: 0\n[2026-10-24 11:22:21] INFO:     127.0.0.1:49212 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:21] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.12\n[2026-10-24 11:22:21] INFO:     127.0.0.1:57702 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:21] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.04\n[2026-10-24 11:22:22] Decode batch, #running-req: 1, #token: 1714, token usage: 0.21, cuda graph: True, gen throughput (token/s): 32.81, #queue-req: 0\n[2026-10-24 11:22:22] INFO:     127.0.0.1:57704 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:22] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 17.08\n[2026-10-24 11:22:22] INFO:     127.0.0.1:57710 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:22] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 16.81\n[2026-10-24 11:22:23] INFO:     127.0.0.1:57718 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:23] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 16.78\n[2026-10-24 11:22:23] Decode batch, #running-req: 1, #token: 1709, token usage: 0.21, cuda graph: True, gen throughput (token/s): 31.26, #queue-req: 0\n[2026-10-24 11:22:23] INFO:     127.0.0.1:57720 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:23] Prefill batch, #new-seq: 1, #new-token: 8, #cached-token: 1692, token usage: 0.21, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 16.53\n[2026-10-24 11:22:24] INFO:     127.0.0.1:57736 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:24] INFO:     127.0.0.1:57746 - \"GET /metrics HTTP/1.1\" 200 OK\n[2026-10-24 11:22:24] Prefill batch, #new-seq: 1, #new-token: 1, #cached-token: 5894, token usage: 0.72, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 1.75\n[2026-10-24 11:22:24] INFO:     127.0.0.1:57752 - \"POST /generate HTTP/1.1\" 200 OK\n[2026-10-24 11:22:24] INFO:     127.0.0.1:57764 - \"GET /metrics HTTP/1.1\" 200 OK\n[2026-10-24 11:22:24] SIGTERM received. signum=None frame=None. Draining requests and shutting down...\n[2026-10-24 11:22:25] Subprocess scheduler_0 (pid=10721) crashed with exit code -15. Triggering SIGQUIT for cleanup...\n[2026-10-24 11:22:25] SIGQUIT received. signum=None, frame=None. It usually means one child failed.\n[2026-10-24 11:22:25] Sleeping 5 seconds before crash diagnostics to let GPU activity settle.\n[2026-10-24 11:22:30] No live scheduler processes found; skipping py-spy and CUDA coredump.\n[2026-10-24 11:22:30] kill_process_tree called: parent_pid=10568, include_parent=True, pid=10568",
+  "match_walk": [],
+  "steps": [
+    {
+      "name": "server boots and HiCache is enabled",
+      "ok": true,
+      "detail": "healthy after 61s; model=Qwen/Qwen3-8B"
+    },
+    {
+      "name": "L2 host pool allocated with the expected token capacity",
+      "ok": true,
+      "detail": "L2 capacity 13,564 tokens vs expected 13,564 for 147,456 B/token (0.00% off)"
+    },
+    {
+      "name": "a request populates L1 and generation completes",
+      "ok": true,
+      "detail": "generated 65 chars: 'Hello!\\n\\nOkay, so I need to figure out what the user is asking for'"
+    },
+    {
+      "name": "a cache entry is evicted from L1 to L2 (backup executed)",
+      "ok": true,
+      "detail": "backup_tokens=1,826 backup_bytes=269,254,656"
+    },
+    {
+      "name": "L2 holds the baseline BF16 representation (147,456 B/token)",
+      "ok": true,
+      "detail": "measured 147,456 B/token vs expected 147,456 (0.00% off). INT8 pool must report 82,944; BF16 pool must report 147,456."
+    },
+    {
+      "name": "a later request restores from L2 (load-back executed)",
+      "ok": true,
+      "detail": "loaded 1,797 tokens back from L2; final request cached 5,894 tokens, prefilled 1"
+    },
+    {
+      "name": "regenerated text matches the first run (deterministic decoding)",
+      "ok": true,
+      "detail": "first='Hello!\\n\\nOkay, so I need to figure out what the user is askin' second='Hello!\\n\\nOkay, so I need to figure out what the user is askin'"
+    }
+  ],
+  "steps_not_run": [],
+  "verdict": "PASS"
+}

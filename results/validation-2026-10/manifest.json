@@ -1,0 +1,227 @@
+{
+  "experiment": "validation-2026-10",
+  "purpose": "Evidence-first rerun of the HiQCache capacity, latency, overhead and quality claims; independent replay of the published Experiment B workload.",
+  "started_utc": "2026-10-24T10:42:00Z",
+  "ended_utc": "2026-10-24T11:25:00Z",
+  "operator": "Abhinandan",
+  "code": {
+    "repo": "awesome-pro/hiqcache",
+    "branch": "validation/evidence-2026-10",
+    "base_commit": "2dcacbf",
+    "head_commit": "ef2f7721b729f8a9f789cfa580549773bc963dc3",
+    "note": "The experiment harnesses were in the working tree during the pod run and were committed immediately afterwards (230beda, ef2f772). Raw pod artifacts were copied unchanged."
+  },
+  "sglang": {
+    "sha": "89e0023e215a6d80b6cff0e3075e11067f2ff90d",
+    "branch": "hiqcache/int8-l2",
+    "pinned_base": "515f5be77e74761c269e007ac41a5895191a1b7d",
+    "note": "Current tip, rebased on a newer upstream main than the published 3bb2ef/26e6d78. The timing and match-walk instrumentation referenced by the old docs is no longer present; overhead was measured standalone."
+  },
+  "runtime": {
+    "torch": "2.14.1+cu130",
+    "cuda_runtime": "13.0",
+    "nvcc": "13.0.88",
+    "driver": "595.91.07"
+  },
+  "hardware": {
+    "gpu": "NVIDIA RTX A6000, 46068 MiB, sm_86",
+    "pcie": "Gen4 x16",
+    "cpu": "96 vCPU",
+    "ram_gb": 503,
+    "os": "Ubuntu 24.04.5, kernel 6.8.0-138",
+    "container_disk_gb": 100
+  },
+  "image": {
+    "expected": "runpod/pytorch:1.4.0-rc.164-cu1300-torch2130-ubuntu2404",
+    "as_found": {
+      "torch": "2.8.0+cu129",
+      "torch_cuda": "12.9",
+      "nvcc_on_path": false,
+      "pep668_externally_managed": true
+    },
+    "resolution": "Created /workspace/venv and installed the fork with the documented command and --extra-index-url .../cu130; pip selected torch 2.14.1+cu130 (the fork's current pin, moved from 2.13). CUDA 13.0 toolkit and driver matched. 25 codec + 36 pool tests passed.",
+    "deviation": true
+  },
+  "model": {
+    "id": "Qwen/Qwen3-8B",
+    "snapshot": "b968826d9c46dd6066d109eabc6255188de91218",
+    "dtype": "bfloat16",
+    "layers": 36,
+    "kv_heads": 8,
+    "head_dim": 128
+  },
+  "tokenizer": {
+    "class": "Qwen2Tokenizer",
+    "vocab_size": 151669,
+    "tokenizer_json_sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+  },
+  "trace": {
+    "path": "trace/trace-seed42.jsonl",
+    "requests": 128,
+    "total_prompt_tokens": 284198,
+    "seed": 42,
+    "sha256": "f5711019fab4bdcf5f73f280907e58a90ed4f54e5750d7e8c6b63aec55ce3cb9"
+  },
+  "oracle": {
+    "ideal_hits": 206670,
+    "ideal_hit_rate": 0.7272042730772208,
+    "unique_tokens": 77528
+  },
+  "configs": {
+    "replay": {
+      "host_size_gb": 8,
+      "max_total_tokens": 16384,
+      "page_size": 1,
+      "tp": 1,
+      "concurrency": 8,
+      "max_new_tokens": 32,
+      "endpoint": "/generate with input_ids"
+    },
+    "quality": {
+      "host_size_gb": 2,
+      "max_total_tokens": 8192,
+      "filler_requests": 80,
+      "prompt_tokens": 5895,
+      "max_new_tokens": 16,
+      "logprob_start_len": -1,
+      "restored_tokens": 1797
+    },
+    "microbench": {
+      "layers": 36,
+      "kv_heads": 8,
+      "head_dim": 128,
+      "warmup": 3,
+      "reps": 10,
+      "sizes": [
+        512,
+        2048,
+        2152,
+        4096
+      ]
+    }
+  },
+  "commands": [
+    "bash scripts/pod_bootstrap.sh /workspace  # not used; repos cloned manually",
+    "/workspace/venv/bin/python -m pip install --extra-index-url https://download.pytorch.org/whl/cu130 -e python  # in /workspace/sglang",
+    "bash scripts/verify_sglang.sh --tests-only  # 25 codec + 36 pool tests",
+    "python scripts/smoke_test.py --config int8 --host-size 2",
+    "python scripts/smoke_test.py --config bf16 --host-size 2",
+    "python scripts/replay_trace.py --config {baseline,bf16,int8} --trace results/validation-2026-10/trace/trace-seed42.jsonl",
+    "python scripts/microbench_codec.py --sglang-root /workspace/sglang",
+    "python scripts/quality_compare.py ...  # failed; see failures",
+    "python scripts/smoke_test.py --config {bf16,int8} --host-size 2 --json .../quality_smoke_{config}.json  # valid forced-L2 quality"
+  ],
+  "artifacts": [
+    {
+      "path": "oracle.json",
+      "bytes": 11211,
+      "sha256": "c28d26413fe6ab82dd25655582323bf83a35afb4cfead0ff542cebbfc6a31327"
+    },
+    {
+      "path": "oracle.md",
+      "bytes": 1967,
+      "sha256": "adb6b73216b9a896d794c13169e51f202416f5acf4698a612e1ebdd3b2fa99f3"
+    },
+    {
+      "path": "oracle_per_request.jsonl",
+      "bytes": 22080,
+      "sha256": "c0c35dc339b46a679e217dde8eea955fd6d5976f0adb551b2ca06b09a79afa4f"
+    },
+    {
+      "path": "raw/microbench.json",
+      "bytes": 12758,
+      "sha256": "18929fcdad1f9e5bc2d772a4fd3069d68e56027dabde8eb67fb661edaae062a4"
+    },
+    {
+      "path": "raw/quality_smoke_bf16.json",
+      "bytes": 13787,
+      "sha256": "ee59d49be56ec1c80bad7580c5e25357930cae57eb487e451fa852bd05a8fa9c"
+    },
+    {
+      "path": "raw/quality_smoke_int8.json",
+      "bytes": 13758,
+      "sha256": "6375a1fd4d334ccbf826259231004918741319edb64964a8f576cb018ec8d45f"
+    },
+    {
+      "path": "raw/replay_baseline.json",
+      "bytes": 185218,
+      "sha256": "9f3e6942ceb349165f8d12eece768632d030676cf9df3e6c75a57e81511cf787"
+    },
+    {
+      "path": "raw/replay_bf16.json",
+      "bytes": 187303,
+      "sha256": "14cd21855d5749f7e5c1823ed2419f35aadd393de99b2252fc9076ef4dcf6c5e"
+    },
+    {
+      "path": "raw/replay_int8.json",
+      "bytes": 187259,
+      "sha256": "01279118005c6151f4ec31de2ce87ced60a0417a15dbe91a671a129ad318183e"
+    },
+    {
+      "path": "summary.md",
+      "bytes": 9339,
+      "sha256": "47ee2e28c01453612e543fd488dfb829135326c70f33135a30c31a72d3c73b75"
+    },
+    {
+      "path": "trace/trace-seed42.jsonl",
+      "bytes": 1767383,
+      "sha256": "f5711019fab4bdcf5f73f280907e58a90ed4f54e5750d7e8c6b63aec55ce3cb9"
+    },
+    {
+      "path": "trace/trace-seed42.manifest.json",
+      "bytes": 1300,
+      "sha256": "1ace9dbc456757a8b0c8f14c5715643ff9d5f01afa9450597223921feb7436b8"
+    }
+  ],
+  "failures": [
+    {
+      "step": "image check",
+      "symptom": "torch 2.8.0+cu129, no nvcc on PATH, PEP 668",
+      "action": "installed the fork in a venv with torch 2.14.1+cu130",
+      "artifact": null
+    },
+    {
+      "step": "quality harness attempt 1",
+      "symptom": "unrecognized arguments --force-filler and --repeat-bf16",
+      "action": "synced the current harness",
+      "artifact": null
+    },
+    {
+      "step": "quality harness attempts 2 to 4",
+      "symptom": "0 L2 restores: unmatched tree nodes, dead nodes from unrelated filler, L1 thrash",
+      "action": "found logprob_start_len=0 as the cache bypass; moved the valid run to the smoke path",
+      "artifact": null
+    },
+    {
+      "step": "quality smoke with logprob_start_len=0",
+      "symptom": "restore failed: cached 0, prefilled 1,799",
+      "action": "changed to -1; both configs restored 1,797 tokens. The corrected captures are raw/quality_smoke_*.json",
+      "artifact": null
+    },
+    {
+      "step": "replay server teardown",
+      "symptom": "SIGQUIT handler log during SIGTERM",
+      "action": "shutdown artifact; replay JSON was written and metrics complete",
+      "artifact": null
+    }
+  ],
+  "notes": [
+    "README.md was not changed.",
+    "Published results/exp_*.json files were not modified. New artifacts are under results/validation-2026-10/.",
+    "The replay INT8 hit rate is 71.97% against 72.7% published. The gap is one missed reuse event (95/96), from a concurrency overlap.",
+    "Quality is one prompt and 16 tokens. It is a spot-check, not a benchmark accuracy result.",
+    "The trace manifest records the SGLang commit and tokenizer file hash, not a local path.",
+    "Server, stdout and failed-attempt logs were not kept. The retained artifacts are the replay JSONs, microbench, quality captures, trace, oracle, summary and this manifest.",
+    "The saved microbench's BF16 transfer control copied the INT8 staging buffer and is marked invalid in microbench.json. The script now allocates a BF16 buffer; a rerun is needed."
+  ],
+  "pruned_artifacts": {
+    "removed": [
+      "server logs",
+      "stdout logs",
+      "failed-attempt logs",
+      "non-logprob smoke JSONs"
+    ],
+    "reason": "Duplicate or operational output. Core JSONs, trace, oracle, summary and manifest are kept; failures are recorded here and in summary.md.",
+    "not_retained": true
+  }
+}
