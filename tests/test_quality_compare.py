@@ -9,6 +9,7 @@ artefact of comparing token A against token B.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -17,12 +18,14 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import quality_compare  # noqa: E402
 from quality_compare import (  # noqa: E402
     build_prompt,
     build_prompts,
     compare,
     extract_chosen_logprobs,
     extract_output_ids,
+    post_generate,
     shared_preamble,
 )
 
@@ -209,3 +212,36 @@ def test_mean_agreed_prefix_averages_over_every_prompt():
     b[0] = _gen([1, 9, 3, 4], [])  # diverges at index 1
     r = compare(a, b)
     assert r["mean_agreed_prefix_tokens"] == (4 + 4 + 4 + 1) / 4
+
+
+def test_logprob_request_asks_for_output_logprobs_only(monkeypatch):
+    """Regression for the bug that made every quality run invalid.
+
+    ``logprob_start_len=0`` asks for FULL input logprobs. SGLang then performs a
+    full prefill and bypasses the prefix cache, so the re-sent prompt matches
+    nothing and ``load_back_tokens`` is 0. The comparison only needs the
+    generated tokens' logprobs, which is ``-1``.
+    """
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"text": "ok", "meta_info": {}}'
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(quality_compare.urllib.request, "urlopen", fake_urlopen)
+    post_generate("http://127.0.0.1:1", "prompt", max_new_tokens=4, logprob=True)
+
+    body = captured["body"]
+    assert body["return_logprob"] is True
+    assert body["logprob_start_len"] == -1
+    assert body["sampling_params"]["temperature"] == 0.0

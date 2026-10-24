@@ -82,6 +82,7 @@ def post_generate(
     max_new_tokens: int = 16,
     timeout: float = 300,
     label: str = "",
+    logprob: bool = False,
 ):
     """One deterministic generation; returns the response JSON.
 
@@ -89,16 +90,24 @@ def post_generate(
     exception. SGLang explains rejected requests there -- for example an input
     longer than the KV pool can budget -- and without it the caller only sees
     "HTTP Error 400: Bad Request", which says nothing about which limit was hit.
+
+    With ``logprob=True`` the response carries ``output_token_logprobs``, so the
+    same prompt can be compared before and after an L2 restore.
     """
-    body = json.dumps(
-        {
-            "text": prompt,
-            "sampling_params": {
-                "temperature": 0.0,
-                "max_new_tokens": max_new_tokens,
-            },
-        }
-    ).encode()
+    body_dict = {
+        "text": prompt,
+        "sampling_params": {
+            "temperature": 0.0,
+            "max_new_tokens": max_new_tokens,
+        },
+    }
+    if logprob:
+        body_dict["return_logprob"] = True
+        # -1 = output logprobs only. logprob_start_len=0 requests full input
+        # logprobs, which forces a prefill and bypasses the prefix cache, so
+        # the re-send cannot restore from L2 (measured: cached 0, load-back 0).
+        body_dict["logprob_start_len"] = -1
+    body = json.dumps(body_dict).encode()
     req = urllib.request.Request(
         f"{base_url}/generate", data=body,
         headers={"Content-Type": "application/json"},
@@ -117,6 +126,24 @@ def post_generate(
             f"{prefix}HTTP {exc.code} from /generate "
             f"(prompt {len(prompt)} chars). Server said: {detail or '(no body)'}"
         ) from exc
+
+
+def compact_response(payload: dict) -> dict:
+    """The fields a quality comparison needs, without the prompt logprobs.
+
+    ``input_token_logprobs`` for a 7k-token prompt would dominate the artifact;
+    the generated tokens are what the restore can change.
+    """
+    meta = payload.get("meta_info") or {}
+    return {
+        "text": payload.get("text"),
+        "output_ids": meta.get("output_ids"),
+        "output_token_logprobs": meta.get("output_token_logprobs"),
+        "prompt_tokens": meta.get("prompt_tokens"),
+        "completion_tokens": meta.get("completion_tokens"),
+        "cached_tokens": meta.get("cached_tokens"),
+        "cached_tokens_details": meta.get("cached_tokens_details"),
+    }
 
 
 _PREFILL_RE = re.compile(
@@ -309,10 +336,13 @@ def main() -> int:
         )
         step = Step("a request populates L1 and generation completes")
         steps.append(step)
-        first = post_generate(base_url, build_prompt(shared_prefix, "Say hello."))
+        first = post_generate(
+            base_url, build_prompt(shared_prefix, "Say hello."), logprob=True
+        )
         text = (first.get("text") or "").strip()
         step.record(len(text) > 0, f"generated {len(text)} chars: {text[:80]!r}")
         report["first_generation"] = {"text": text[:200]}
+        report["first_response"] = compact_response(first)
 
         # --- 3. L1 -> L2 ----------------------------------------------
         # Enough distinct traffic to evict the shared prefix out of L1 into L2.
@@ -404,8 +434,11 @@ def main() -> int:
         step = Step("a later request restores from L2 (load-back executed)")
         steps.append(step)
         load_before = mid.get("sglang:load_back_tokens_total", 0.0)
-        second = post_generate(base_url, build_prompt(shared_prefix, "Say hello."))
+        second = post_generate(
+            base_url, build_prompt(shared_prefix, "Say hello."), logprob=True
+        )
         second_text = (second.get("text") or "").strip()
+        report["final_response"] = compact_response(second)
         after = scrape_metrics(base_url)
         load_delta = after.get("sglang:load_back_tokens_total", 0.0) - load_before
         history = prefill_history(log_path)
