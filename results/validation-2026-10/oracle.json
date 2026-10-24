@@ -1,0 +1,343 @@
+{
+  "trace": {
+    "path": "/Users/abhinandan/Desktop/hiqcache/results/validation-2026-10/trace/trace-seed42.jsonl",
+    "requests": 128,
+    "total_prompt_tokens": 284198,
+    "groups": 32,
+    "mean_prompt_len": 2220.296875,
+    "mean_shared_prefix_tokens": 2152.8125,
+    "mean_question_tokens": 67.484375,
+    "prefix_share": 0.9696056974362944,
+    "unique_tokens": 77528,
+    "unique_tokens_ratio": 0.2727957269227792
+  },
+  "oracle": {
+    "definition": "unlimited capacity, sequential, longest prior token prefix",
+    "ideal_hits": 206670,
+    "ideal_hit_rate": 0.7272042730772208,
+    "mean_hit_tokens_per_request": 1614.609375,
+    "reuse_events": 96,
+    "reuse_gap_tokens": {
+      "min": 66,
+      "median": 5595.0,
+      "mean": 13023.604166666666,
+      "max": 62627
+    }
+  },
+  "capacity_model": {
+    "bf16_8gb": {
+      "capacity_tokens": 54254,
+      "groups_fit": 25,
+      "groups_total": 32,
+      "prefix_bytes_used": 53687,
+      "predicted_hits_proportional": 161460.9375,
+      "predicted_rate_proportional": 0.5681283383415787,
+      "predicted_rate_smallest_prefixes": 0.566721088818359,
+      "predicted_rate_largest_prefixes": 0.5695817704558089,
+      "largest_selection_bytes": 53958
+    },
+    "int8_8gb": {
+      "capacity_tokens": 96451,
+      "groups_fit": 32,
+      "groups_total": 32,
+      "prefix_bytes_used": 68890,
+      "predicted_hits_proportional": 206670.0,
+      "predicted_rate_proportional": 0.7272042730772208,
+      "predicted_rate_smallest_prefixes": 0.7272042730772208,
+      "predicted_rate_largest_prefixes": 0.7272042730772208,
+      "largest_selection_bytes": 68890
+    },
+    "effective_prefix_capacity": {
+      "bf16_groups": 25,
+      "int8_groups": 32,
+      "groups_total": 32
+    }
+  },
+  "roofline_by_reuse_multiplicity": [
+    {
+      "prompts_per_group": 2,
+      "roofline_hit_rate": 0.4848028487181472
+    },
+    {
+      "prompts_per_group": 4,
+      "roofline_hit_rate": 0.7272042730772208
+    },
+    {
+      "prompts_per_group": 8,
+      "roofline_hit_rate": 0.8484049852567577
+    },
+    {
+      "prompts_per_group": 16,
+      "roofline_hit_rate": 0.909005341346526
+    },
+    {
+      "prompts_per_group": 32,
+      "roofline_hit_rate": 0.9393055193914103
+    },
+    {
+      "prompts_per_group": 64,
+      "roofline_hit_rate": 0.9544556084138524
+    },
+    {
+      "prompts_per_group": 128,
+      "roofline_hit_rate": 0.9620306529250734
+    },
+    {
+      "prompts_per_group": 256,
+      "roofline_hit_rate": 0.9658181751806839
+    }
+  ],
+  "capacity_sweep_model": [
+    {
+      "host_size_gb": 1,
+      "config": "bf16",
+      "capacity_tokens": 6782,
+      "groups_fit": 3,
+      "groups_total": 32,
+      "prefix_bytes_used": 6377,
+      "predicted_hits_proportional": 19375.3125,
+      "predicted_rate_proportional": 0.06817540060098945,
+      "predicted_rate_smallest_prefixes": 0.06731574465689413,
+      "predicted_rate_largest_prefixes": 0.06897303992287067,
+      "largest_selection_bytes": 6534,
+      "observed": false
+    },
+    {
+      "host_size_gb": 1,
+      "config": "int8",
+      "capacity_tokens": 12057,
+      "groups_fit": 5,
+      "groups_total": 32,
+      "prefix_bytes_used": 10650,
+      "predicted_hits_proportional": 32292.1875,
+      "predicted_rate_proportional": 0.11362566766831575,
+      "predicted_rate_smallest_prefixes": 0.1124216215455422,
+      "predicted_rate_largest_prefixes": 0.11476505816367462,
+      "largest_selection_bytes": 10872,
+      "observed": false
+    },
+    {
+      "host_size_gb": 2,
+      "config": "bf16",
+      "capacity_tokens": 13564,
+      "groups_fit": 6,
+      "groups_total": 32,
+      "prefix_bytes_used": 12791,
+      "predicted_hits_proportional": 38750.625,
+      "predicted_rate_proportional": 0.1363508012019789,
+      "predicted_rate_smallest_prefixes": 0.135022062083477,
+      "predicted_rate_largest_prefixes": 0.1376399552424718,
+      "largest_selection_bytes": 13039,
+      "observed": false
+    },
+    {
+      "host_size_gb": 2,
+      "config": "int8",
+      "capacity_tokens": 24113,
+      "groups_fit": 11,
+      "groups_total": 32,
+      "prefix_bytes_used": 23517,
+      "predicted_hits_proportional": 71042.8125,
+      "predicted_rate_proportional": 0.24997646887029465,
+      "predicted_rate_smallest_prefixes": 0.2482459412100015,
+      "predicted_rate_largest_prefixes": 0.2517083160331881,
+      "largest_selection_bytes": 23845,
+      "observed": false
+    },
+    {
+      "host_size_gb": 4,
+      "config": "bf16",
+      "capacity_tokens": 27127,
+      "groups_fit": 12,
+      "groups_total": 32,
+      "prefix_bytes_used": 25667,
+      "predicted_hits_proportional": 77501.25,
+      "predicted_rate_proportional": 0.2727016024039578,
+      "predicted_rate_smallest_prefixes": 0.2709413859351579,
+      "predicted_rate_largest_prefixes": 0.2744670968831589,
+      "largest_selection_bytes": 26001,
+      "observed": false
+    },
+    {
+      "host_size_gb": 4,
+      "config": "int8",
+      "capacity_tokens": 48226,
+      "groups_fit": 22,
+      "groups_total": 32,
+      "prefix_bytes_used": 47204,
+      "predicted_hits_proportional": 142085.625,
+      "predicted_rate_proportional": 0.4999529377405893,
+      "predicted_rate_smallest_prefixes": 0.49828640595641066,
+      "predicted_rate_largest_prefixes": 0.5016432205715733,
+      "largest_selection_bytes": 47522,
+      "observed": false
+    },
+    {
+      "host_size_gb": 8,
+      "config": "bf16",
+      "capacity_tokens": 54254,
+      "groups_fit": 25,
+      "groups_total": 32,
+      "prefix_bytes_used": 53687,
+      "predicted_hits_proportional": 161460.9375,
+      "predicted_rate_proportional": 0.5681283383415787,
+      "predicted_rate_smallest_prefixes": 0.566721088818359,
+      "predicted_rate_largest_prefixes": 0.5695817704558089,
+      "largest_selection_bytes": 53958,
+      "observed": false
+    },
+    {
+      "host_size_gb": 8,
+      "config": "int8",
+      "capacity_tokens": 96451,
+      "groups_fit": 32,
+      "groups_total": 32,
+      "prefix_bytes_used": 68890,
+      "predicted_hits_proportional": 206670.0,
+      "predicted_rate_proportional": 0.7272042730772208,
+      "predicted_rate_smallest_prefixes": 0.7272042730772208,
+      "predicted_rate_largest_prefixes": 0.7272042730772208,
+      "largest_selection_bytes": 68890,
+      "observed": false
+    },
+    {
+      "host_size_gb": 16,
+      "config": "bf16",
+      "capacity_tokens": 108507,
+      "groups_fit": 32,
+      "groups_total": 32,
+      "prefix_bytes_used": 68890,
+      "predicted_hits_proportional": 206670.0,
+      "predicted_rate_proportional": 0.7272042730772208,
+      "predicted_rate_smallest_prefixes": 0.7272042730772208,
+      "predicted_rate_largest_prefixes": 0.7272042730772208,
+      "largest_selection_bytes": 68890,
+      "observed": false
+    },
+    {
+      "host_size_gb": 16,
+      "config": "int8",
+      "capacity_tokens": 192902,
+      "groups_fit": 32,
+      "groups_total": 32,
+      "prefix_bytes_used": 68890,
+      "predicted_hits_proportional": 206670.0,
+      "predicted_rate_proportional": 0.7272042730772208,
+      "predicted_rate_smallest_prefixes": 0.7272042730772208,
+      "predicted_rate_largest_prefixes": 0.7272042730772208,
+      "largest_selection_bytes": 68890,
+      "observed": false
+    },
+    {
+      "host_size_gb": 32,
+      "config": "bf16",
+      "capacity_tokens": 217014,
+      "groups_fit": 32,
+      "groups_total": 32,
+      "prefix_bytes_used": 68890,
+      "predicted_hits_proportional": 206670.0,
+      "predicted_rate_proportional": 0.7272042730772208,
+      "predicted_rate_smallest_prefixes": 0.7272042730772208,
+      "predicted_rate_largest_prefixes": 0.7272042730772208,
+      "largest_selection_bytes": 68890,
+      "observed": false
+    },
+    {
+      "host_size_gb": 32,
+      "config": "int8",
+      "capacity_tokens": 385803,
+      "groups_fit": 32,
+      "groups_total": 32,
+      "prefix_bytes_used": 68890,
+      "predicted_hits_proportional": 206670.0,
+      "predicted_rate_proportional": 0.7272042730772208,
+      "predicted_rate_smallest_prefixes": 0.7272042730772208,
+      "predicted_rate_largest_prefixes": 0.7272042730772208,
+      "largest_selection_bytes": 68890,
+      "observed": false
+    }
+  ],
+  "observed_experiment_b": {
+    "baseline": {
+      "file": "exp_baseline_exp-b-8gb.json",
+      "sglang_sha": "9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1",
+      "hit_rate": 0.122,
+      "total_cached_tokens": 34547.0,
+      "total_prompt_tokens": 284198.0,
+      "device_cached_tokens": 34547.0,
+      "host_cached_tokens": 0.0,
+      "ttft_mean_ms": 1643.02,
+      "ttft_p99_ms": 3626.34,
+      "tpot_mean_ms": 47.9,
+      "itl_p99_ms": 1021.4,
+      "output_throughput": 79.99,
+      "duration_s": 51.2,
+      "load_back_tokens": 0.0,
+      "backup_tokens": 0.0,
+      "dropped_tokens": 0.0,
+      "l2_capacity_gauge_absolute": 0.0,
+      "l2_used_gauge_absolute": 0.0,
+      "l2_capacity_gauge_delta": 0.0,
+      "server_cache_hit_rate": 0.0,
+      "prompt_tokens_total_server": 286423.0
+    },
+    "bf16": {
+      "file": "exp_bf16_exp-b-8gb.json",
+      "sglang_sha": "9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1",
+      "hit_rate": 0.561,
+      "total_cached_tokens": 159388.0,
+      "total_prompt_tokens": 284198.0,
+      "device_cached_tokens": 32391.0,
+      "host_cached_tokens": 126997.0,
+      "ttft_mean_ms": 1244.31,
+      "ttft_p99_ms": 3450.8,
+      "tpot_mean_ms": 36.95,
+      "itl_p99_ms": 390.93,
+      "output_throughput": 105.12,
+      "duration_s": 38.97,
+      "load_back_tokens": 126997.0,
+      "backup_tokens": 226350.0,
+      "dropped_tokens": 0.0,
+      "l2_capacity_gauge_absolute": 54254.0,
+      "l2_used_gauge_absolute": 53585.0,
+      "l2_capacity_gauge_delta": 0.0,
+      "server_cache_hit_rate": 0.9693831607384061,
+      "prompt_tokens_total_server": 286423.0
+    },
+    "int8": {
+      "file": "exp_int8_exp-b-8gb.json",
+      "sglang_sha": "9a7ac7978f49e9280f41fb10ec3ee6fb0e49b1c1",
+      "hit_rate": 0.727,
+      "total_cached_tokens": 206753.0,
+      "total_prompt_tokens": 284198.0,
+      "device_cached_tokens": 38854.0,
+      "host_cached_tokens": 167899.0,
+      "ttft_mean_ms": 922.3,
+      "ttft_p99_ms": 3369.6,
+      "tpot_mean_ms": 33.27,
+      "itl_p99_ms": 112.64,
+      "output_throughput": 127.85,
+      "duration_s": 32.04,
+      "load_back_tokens": 167899.0,
+      "backup_tokens": 80833.0,
+      "dropped_tokens": 0.0,
+      "l2_capacity_gauge_absolute": 96451.0,
+      "l2_used_gauge_absolute": 80833.0,
+      "l2_capacity_gauge_delta": 0.0,
+      "server_cache_hit_rate": 0.9702568724650743,
+      "prompt_tokens_total_server": 286423.0
+    }
+  },
+  "definitions": {
+    "hit_rate": "sum(cached prompt tokens) / sum(prompt tokens), benchmark denominator",
+    "ideal_oracle": "upper bound; omits concurrency, L1 residency, eviction policy, completions",
+    "capacity_model": "all-or-nothing shared-prefix residency; a model, not a measurement",
+    "observed": "published results/exp_*_exp-b-8gb.json; one run per config"
+  },
+  "omissions": [
+    "concurrency (8 in-flight requests) and request-completion timing",
+    "L1 device residency and the per-layer restore path",
+    "radix-tree eviction granularity and lock_ref protection",
+    "generated continuations and decode scheduling"
+  ]
+}
