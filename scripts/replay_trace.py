@@ -1,30 +1,17 @@
-"""Replay the exact 128-request trace and record per-request cache/latency data.
+"""Replay the exact trace and record per-request cache and latency data.
 
-The published benchmark reports only aggregates. This client sends the same
-tokenized prompts, in the same arrival order, at the same concurrency, and
-records for every request:
+Sends the trace token ids in arrival order at a fixed concurrency and records
+``cached_tokens``, ``cached_tokens_details`` (device and host), TTFT, end-to-end
+latency, and the ITL series for each request.
 
-* ``cached_tokens`` and ``cached_tokens_details`` (device / host split) from
-  the server's own ``meta_info``;
-* TTFT, end-to-end latency, and the full ITL series;
-* the group id from the trace, so per-group residency can be checked against
-  the 25/32-prefix capacity model.
-
-That is what separates "the hit rate is higher" from "the extra hits are L2
-restores that shorten TTFT", and it is the per-request correlation the brief
-asks for.
-
-The workload is the published Experiment B one: 8 GB host pool, L1 capped at
-16,384 tokens, concurrency 8. One configuration per invocation, so the caller
-alternates BF16 and INT8 rather than pooling them.
+One config per invocation: baseline, bf16, or int8.
 
 Usage::
 
     /workspace/venv/bin/python scripts/replay_trace.py \\
         --config bf16 --trace results/validation-2026-10/trace/trace-seed42.jsonl
 
-Outputs ``results/validation-2026-10/raw/replay_<config>.json`` and the server
-log beside it.
+Outputs ``results/validation-2026-10/raw/replay_<config>.json``.
 """
 
 from __future__ import annotations

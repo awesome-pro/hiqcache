@@ -4,8 +4,8 @@ The capacity and latency results say nothing about what the lossy codec does to
 model output. This measures it directly, by running identical prompts through the
 BF16 and INT8 configurations and comparing:
 
-  * generation agreement — first token, and the whole sequence
-  * chosen-token logprob deltas — mean / p95 / p99 / max
+  * generation agreement: first token, and the whole sequence
+  * chosen-token logprob deltas: mean / p95 / p99 / max
   * (optionally) a small task subset
 
 Getting the L2 path exercised matters. Prefix caching on a warm server can serve

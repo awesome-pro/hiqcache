@@ -1,49 +1,21 @@
-"""Export the EXACT token-id trace a benchmark run actually served.
+"""Export the exact token-id trace a benchmark run served.
 
-The published experiments report aggregate token counts (284,198 prompt tokens,
-206,753 cached). Those are not enough to say what the *ceiling* was, because the
-ceiling depends on the exact token ids and their arrival order. This script
-regenerates the benchmark's request list with SGLang's own dataset code, the
-same seed, and the same tokenizer, then writes the token ids in submit order.
+Regenerates the benchmark request list with SGLang's own
+``GeneratedSharedPrefixDataset``, the same seed and tokenizer, then writes every
+token id in submit order.
 
-Why this is exact
------------------
-``generated-shared-prefix`` is deterministic given
-``(seed, num_groups, prompts_per_group, system_prompt_len, question_len,
-output_len, tokenizer)``: it seeds ``random`` and ``numpy.random``, samples
-token ids, decodes them to text, shuffles the request list, and writes a pickle
-cache keyed on those parameters. We call the same
-``GeneratedSharedPrefixDataset`` class rather than reimplementing it, so the
-text (and therefore the token ids) cannot drift from what the benchmark sent.
+Outputs ``<out>.jsonl`` (one request per line) and ``<out>.manifest.json``
+(tokenizer hash, seed, args, token totals, trace hash).
 
-The nominal 2048+64 does NOT equal the real prompt length. ``gen_prompt``
-samples 2,048 token ids, decodes them to text, and re-encoding that text is not
-length-preserving: the system prompt re-encodes to ~2,152 tokens on average and
-the 64-token question to ~67.5. That is why 128 x (2048 + 64) = 270,336 differs
-from the observed 284,198; the trace makes the difference explicit per request.
+Usage::
 
-Outputs
--------
-``<out>.jsonl``
-    One JSON object per request, in arrival (submit) order::
-
-        {"request_id": "req-000", "arrival_index": 0, "group": 0,
-         "prompt_len": 2225, "output_len": 32, "token_ids": [...]}
-
-``<out>.manifest.json``
-    Provenance: tokenizer class/vocab/sha256, seed, generation args, total
-    prompt tokens, per-group prefix statistics, and the trace file's sha256.
-
-Usage
------
     python scripts/export_trace.py \\
         --tokenizer-dir /path/to/Qwen3-8B-tokenizer \\
         --sglang-root ../sglang \\
         --out results/validation-2026-10/trace/trace-seed42.jsonl
 
-``--tokenizer`` (a HF repo id) can be used instead of ``--tokenizer-dir`` when
-the hub is reachable. The script does not import ``sglang`` (which needs torch);
-it loads the two dataset modules by path, exactly as the test suite does.
+``--tokenizer`` (a HF repo id) can be used instead of ``--tokenizer-dir``. The
+script loads the dataset modules by path and does not import ``sglang``.
 """
 
 from __future__ import annotations

@@ -1,22 +1,10 @@
-"""Isolated codec and PCIe cost of one L2 restore, on the real GPU.
+"""Measure codec and PCIe cost of one L2 restore on the GPU.
 
-The published results have no phase timing: the fork's
-``SGLANG_HICACHE_INT8_TIMING`` instrumentation is not present at the current
-tip, so "the codec overhead was not measured" was true. This measures the
-pieces directly, without a server:
+Times encode, D2H, H2D, and decode plus scatter with CUDA events, and the BF16
+transfer of the same tokens as a control. Reports p50/p95/p99 and GB/s.
 
-  encode   index_select + per-head absmax + round/clamp/cast + record packing
-  D2H      encoded GPU staging -> pinned host arena
-  H2D      pinned host arena -> GPU staging
-  decode   unpack + dequantise + scatter into the BF16 device pool
-
-and the BF16 transfer of the same tokens as the control. Each phase is timed
-with CUDA events over repeated runs, reporting p50/p95/p99 and realised GB/s.
-
-What it does not measure: the JIT mover's exact instruction mix (a bulk
-``copy_`` is used for bandwidth), stream overlap with concurrent requests, or
-the scheduler's critical path. Those need the server; this is the lower bound
-that decides whether a fused kernel is worth writing.
+The transfer phases use a bulk ``copy_``. Stream overlap and the scheduler's
+critical path are not measured.
 
 Usage::
 

@@ -1,42 +1,15 @@
 """Trace-derived hit-rate ceiling, capacity model, and observed comparison.
 
-This is the theoretical baseline the project was missing. It answers three
-questions with arithmetic on the exact token trace, not with a benchmark run:
+The oracle walks the exact token trace in arrival order and counts the longest
+prefix that already exists in a trie of earlier requests. That gives the reuse
+ceiling for the workload.
 
-1. What is the *ceiling* on cache-hit rate for this workload?
-2. Why is the measured rate 57-73% when production prefix caches report 95-99%?
-3. How much of the gap between BF16 and INT8 is capacity, and how much is the
-   codec?
+Outputs ``oracle.json``, ``oracle.md`` and ``oracle_per_request.jsonl``. The
+capacity model and the reuse-multiplicity table are described in
+``docs/theory.md``.
 
-Definitions
------------
-hit rate
-    ``sum(cached prompt tokens) / sum(prompt tokens)`` over the measured
-    requests. Every denominator below uses the same 284,198 prompt tokens.
+Usage::
 
-ideal oracle (unlimited capacity, sequential)
-    For each request in arrival order, the longest token prefix already seen in
-    any earlier request is counted as reused; then the whole prompt is inserted.
-    This is an upper bound: it assumes infinite L2, one request at a time, and
-    that request-completion timing never matters. It deliberately omits
-    concurrency, scheduling, L1 residency, eviction policy, and generated
-    continuations.
-
-capacity model
-    The ideal oracle plus "a group's shared prefix is reusable only if that
-    prefix fits in L2". Each of the 32 groups has one shared prefix of
-    ~2,152 tokens; a 54,254-token BF16 L2 holds ~25 of them, while a
-    96,451-token INT8 L2 holds all 32. This all-or-nothing model is what the
-    measured rates track; it is a model, not a measurement.
-
-Why production reports 95-99%
-    The roofline is ``(P-1)/P * prefix_share``, where ``P`` is requests per
-    shared prefix. With P=4 (this workload) the ceiling is 72.7%. Reaching 95%
-    requires P >= ~64 (or multi-turn reuse of a long history). The cache cannot
-    invent reuse the workload does not contain.
-
-Usage
------
     python scripts/oracle.py \\
         --trace results/validation-2026-10/trace/trace-seed42.jsonl \\
         --out results/validation-2026-10/oracle.json
@@ -394,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     lines = [
         "# Trace-derived hit-rate ceiling",
         "",
-        f"Trace: `{trace_path.name}` — {len(rows)} requests, {total:,} prompt tokens, "
+        f"Trace: `{trace_path.name}`. {len(rows)} requests, {total:,} prompt tokens, "
         f"{len(prefix_lens)} groups.",
         "",
         "## Ceiling",
@@ -446,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for name, model in (("bf16", model_bf16), ("int8", model_int8)):
         o = observed.get(name)
-        obs = f"{o['hit_rate']:.2%}" if o else "—"
+        obs = f"{o['hit_rate']:.2%}" if o else "n/a"
         lo = min(
             model["predicted_rate_smallest_prefixes"],
             model["predicted_rate_largest_prefixes"],
@@ -457,13 +430,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         lines.append(
             f"| {name} | {model['capacity_tokens']:,} | {model['groups_fit']}/"
-            f"{model['groups_total']} | {lo:.2%}–{hi:.2%} "
+            f"{model['groups_total']} | {lo:.2%} to {hi:.2%} "
             f"(representative {model['predicted_rate_proportional']:.2%}) | {obs} |"
         )
     lines += [
         "",
         "The model is all-or-nothing per shared prefix: a prefix is reusable only if it",
-        "fits in L2. It tracks the measured rates without tuning, and it is a model — not",
+        "fits in L2. It tracks the measured rates without tuning. It is a model, not",
         "a substitute for the per-request counters.",
         "",
         "## Omissions",
