@@ -38,7 +38,8 @@ The oracle assumes unlimited capacity and one request at a time.
 | HiQCache INT8 | 71.97% | 204,529 | 72.7% (repeats 72.7 to 73.4%) | 98.97% |
 
 The replay uses the exact token ids, the native `/generate` endpoint,
-concurrency 8, and no warmup. It is within 0.75 points of the published rates.
+concurrency 8, and no warmup. It gives 57.57% and 71.97%. The published runs
+are BF16 56.1% (repeats 57.6) and INT8 72.7% (repeats 72.7 to 73.4).
 
 There are 96 reuse events: 128 prompts minus 32 first-of-group prompts. BF16
 served 76 of them. INT8 served 95. The misses are spread across groups:
@@ -152,7 +153,7 @@ accuracy result.
    the shared pod.
 4. One quality sample. No broad accuracy result.
 5. SGLang 89e0023 and torch 2.14.1 differ from the published 3bb2ef and 2.13.
-   The hit rates match within 0.75 points, not byte for byte.
+   The hit rates are close to the published repeat ranges, not byte for byte.
 6. The raw server logs were not kept in the repository. The failures are
    recorded in the manifest.
 
