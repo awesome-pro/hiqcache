@@ -100,7 +100,8 @@ The trace was replayed against the current fork tip (SGLang `89e0023`, torch
 | BF16 HiCache | 57.57% | 56.1% (repeats 57.6%) |
 | HiQCache INT8 | 71.97% | 72.7% (repeats 72.7 to 73.4%) |
 
-The replay is within 0.75 points of the published rates. INT8 served 95 of 96
+The replay gives 57.57% and 71.97%. The published runs are 56.1% for BF16
+(repeats 57.6%) and 72.7% for INT8 (repeats 72.7 to 73.4%). INT8 served 95 of 96
 reuse events. The one miss is a concurrency overlap, not a codec loss. The
 published run served 96.
 
